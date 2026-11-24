@@ -17,34 +17,37 @@ from __future__ import annotations
 import argparse
 import base64
 import math
+import sys
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.hyperlink import Hyperlink
+
+from spreadtracker.model import (
+    BASE64_CHUNK_CHARS,
+    INSTRUMENT_FIRST_ROW,
+    ORDER_FIRST_ROW,
+    PATTERN_BLOCK_ROWS,
+    PATTERN_FIRST_DATA_ROW,
+    PATTERN_FIRST_HEADER_ROW,
+    Cell,
+    Module,
+    Sample,
+    format_cell,
+    parse_mod,
+)
 
 PROJECT_NAME = "Spreadtracker"
 DEFAULT_WORKBOOK = Path("workbook/spreadtracker.xlsx")
 DEFAULT_WAV = "spreadtracker.wav"
 
-# Protracker finetune-0 period table: C-1 .. B-3.
-PERIODS: tuple[int, ...] = (
-    856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453,
-    428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226,
-    214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113,
-)
-NOTE_NAMES: tuple[str, ...] = tuple(
-    f"{name}{octave}"
-    for octave in (1, 2, 3)
-    for name in ("C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-")
-)
-PERIOD_TO_NOTE = dict(zip(PERIODS, NOTE_NAMES))
-
-EFFECT_CHARS = "0123456789ABCDEF"
 EFFECT_INFO: tuple[tuple[str, str, str, str], ...] = (
     ("0", "Arpeggio", "Fast three-note arpeggio: 0XY plays note, note+X, note+Y semitones.", "Parsed only"),
     ("1", "Portamento up", "Slide sample playback rate upward.", "Parsed only"),
@@ -83,16 +86,6 @@ EFFECT_SUB_INFO: tuple[tuple[str, str, str], ...] = (
     ("EF", "Invert loop", "Amiga sample loop inversion."),
 )
 
-SIGNATURES = {"M.K.", "M!K!", "4CHN", "FLT4"}
-
-# Worksheet layout constants. The VBA modules mirror these values.
-PATTERN_FIRST_HEADER_ROW = 4
-PATTERN_BLOCK_ROWS = 66  # 1 header + 1 column header + 64 data rows
-PATTERN_FIRST_DATA_ROW = PATTERN_FIRST_HEADER_ROW + 2  # 6
-ORDER_FIRST_ROW = 23
-INSTRUMENT_FIRST_ROW = 4
-BASE64_CHUNK_CHARS = 96
-
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 SUBHEADER_FILL = PatternFill("solid", fgColor="D9E2F3")
 BLOCK_FILL = PatternFill("solid", fgColor="2F5597")
@@ -121,134 +114,6 @@ EFFECT_FILLS: dict[int, PatternFill] = {
     0xE: PatternFill("solid", fgColor="FFF2CC"),
     0xF: PatternFill("solid", fgColor="E2EFDA"),
 }
-
-
-@dataclass(frozen=True)
-class Sample:
-    index: int
-    name: str
-    length: int
-    finetune: int
-    volume: int
-    repeat_start: int
-    repeat_length: int
-    data: bytes
-    offset: int
-
-    @property
-    def used(self) -> bool:
-        return self.length > 0
-
-
-@dataclass(frozen=True)
-class Cell:
-    period: int
-    sample: int
-    effect: int
-    param: int
-
-
-@dataclass
-class Module:
-    title: str
-    signature: str
-    song_length: int
-    restart: int
-    order: list[int]
-    samples: list[Sample]
-    patterns: list[list[list[Cell]]]  # [pattern][row][channel]
-
-    @property
-    def used_patterns(self) -> list[int]:
-        return sorted(set(self.order[: self.song_length]))
-
-
-def parse_mod(path: Path) -> Module:
-    raw = path.read_bytes()
-    if len(raw) < 1084:
-        raise ValueError(f"{path} is too short to be a classic MOD file")
-
-    signature = raw[1080:1084].decode("ascii", errors="replace")
-    if signature not in SIGNATURES:
-        raise ValueError(f"Unsupported MOD signature {signature!r}; expected a 4-channel module")
-
-    title = raw[0:20].split(b"\0", 1)[0].decode("latin-1", errors="replace").strip()
-    song_length = raw[950]
-    restart = raw[951]
-    order = list(raw[952:1080])
-
-    sample_headers: list[tuple[str, int, int, int, int, int]] = []
-    for i in range(31):
-        off = 20 + i * 30
-        name = raw[off : off + 22].split(b"\0", 1)[0].decode("latin-1", errors="replace").strip()
-        length_words = int.from_bytes(raw[off + 22 : off + 24], "big")
-        finetune = raw[off + 24] & 0x0F
-        volume = raw[off + 25]
-        repeat_start_words = int.from_bytes(raw[off + 26 : off + 28], "big")
-        repeat_len_words = int.from_bytes(raw[off + 28 : off + 30], "big")
-        sample_headers.append(
-            (name, length_words * 2, finetune, volume, repeat_start_words * 2, repeat_len_words * 2)
-        )
-
-    total_sample_bytes = sum(header[1] for header in sample_headers)
-    pattern_bytes = len(raw) - 1084 - total_sample_bytes
-    if pattern_bytes < 0 or pattern_bytes % 1024 != 0:
-        raise ValueError(
-            f"Cannot infer pattern count: {pattern_bytes} pattern bytes "
-            f"(remainder {pattern_bytes % 1024})"
-        )
-    pattern_count = pattern_bytes // 1024
-
-    sample_offset = 1084 + pattern_count * 1024
-    samples: list[Sample] = []
-    for i, (name, length, finetune, volume, rep_start, rep_len) in enumerate(sample_headers, start=1):
-        samples.append(
-            Sample(
-                index=i,
-                name=name,
-                length=length,
-                finetune=finetune,
-                volume=volume,
-                repeat_start=rep_start,
-                repeat_length=rep_len,
-                data=raw[sample_offset : sample_offset + length],
-                offset=sample_offset,
-            )
-        )
-        sample_offset += length
-
-    patterns: list[list[list[Cell]]] = []
-    for p in range(pattern_count):
-        base = 1084 + p * 1024
-        rows: list[list[Cell]] = []
-        for r in range(64):
-            channels: list[Cell] = []
-            for c in range(4):
-                off = base + (r * 4 + c) * 4
-                a, b, cc, d = raw[off : off + 4]
-                period = ((a & 0x0F) << 8) | b
-                sample_no = ((a & 0xF0) | (cc >> 4)) & 0x3F
-                effect = cc & 0x0F
-                channels.append(Cell(period, sample_no, effect, d))
-            rows.append(channels)
-        patterns.append(rows)
-
-    return Module(
-        title=title or "untitled",
-        signature=signature,
-        song_length=song_length,
-        restart=restart,
-        order=order,
-        samples=samples,
-        patterns=patterns,
-    )
-
-
-def format_cell(cell: Cell) -> str:
-    note = PERIOD_TO_NOTE.get(cell.period, "---") if cell.period else "---"
-    sample = f"{cell.sample:02d}" if cell.sample else "--"
-    effect = f"{EFFECT_CHARS[cell.effect]}{cell.param:02X}" if (cell.effect or cell.param) else "..."
-    return f"{note} {sample} {effect}"
 
 
 def style_title(ws, cell_range: str, text: str) -> None:
@@ -284,7 +149,8 @@ def build_start_sheet(wb: Workbook, mod: Module, out_path: Path) -> None:
         ("Generated workbook", out_path.name),
         ("Goal", "Use an Excel grid as a Protracker-style pattern editor, with VBA rendering audio to WAV."),
         ("Sheets", "Song = settings/order list · Patterns = pattern grid · Instruments = sample headers · Effects = command reference · SampleData = embedded PCM (hidden)."),
-        ("To play", "Import vba/TrackerCore.bas and vba/AudioRender.bas into the VBA editor, save as .xlsm, enable macros, and run RenderAndPlay."),
+        ("To play (Excel)", "Import vba/TrackerCore.bas and vba/AudioRender.bas into the VBA editor, save as .xlsm, enable macros, and run RenderAndPlay."),
+        ("To play (Calc)", "Copy calc/Spreadtracker.py and the spreadtracker package into LibreOffice's Scripts/python folder, open this workbook in Calc, and run RenderAndPlay. See README.md."),
         ("Current renderer", "Note triggers, instrument volume, Cxx set-volume, static tempo/speed, 4-channel mono mix, nearest-neighbour resampling. Other effects are parsed but not yet rendered."),
         ("Timing", "Protracker timing is approximated as ticks/sec = BPM * 2 / 5. Rows advance once per Speed tick."),
         ("Sample numbers", "Shown as two-digit decimal values in the grid (not hexadecimal) to reduce ambiguity."),

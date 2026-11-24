@@ -1,0 +1,4 @@
+# Rendering in Calc needs only the Python standard library.
+# These are optional playback backends; the renderer works without them.
+sounddevice>=0.4,<1
+numpy>=1.24,<3
