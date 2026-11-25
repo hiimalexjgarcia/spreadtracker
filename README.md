@@ -45,7 +45,7 @@ empty cell.
 
 The renderer is tick-driven and currently supports:
 
-- note triggers and instrument/sample volume (MOD volume byte `0` means 64)
+- note triggers and literal sample-header volume (`0` is silent, `64` is full)
 - signed 8-bit MOD sample decoding with loops, one-shot handling for 2-byte
   MOD loop headers, and linear interpolation
 - `0xx` arpeggio

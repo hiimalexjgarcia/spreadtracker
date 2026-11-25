@@ -296,12 +296,8 @@ Private Sub ProcessRow()
                 vPeriod(ch) = CDbl(cell.Period)
                 vTarget(ch) = vPeriod(ch)
             End If
-            ' A zero volume byte in a MOD sample header means 64, not mute.
-            If inst.Volume = 0 Then
-                vVol(ch) = 1!
-            Else
-                vVol(ch) = CSng(inst.Volume / 64#)
-            End If
+            ' MOD sample-header volume is literal: 0 is silent, 64 is full.
+            vVol(ch) = CSng(inst.Volume / 64#)
             ' MOD repeat length is in bytes. Lengths of 2 bytes or less are
             ' treated as "no loop" by Protracker-compatible players, so honor
             ' the whole sample instead of wrapping to a silent 2-byte loop.

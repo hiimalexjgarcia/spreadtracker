@@ -267,9 +267,8 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 else:
                     voice.period = float(cell.period)
                     voice.target_period = voice.period
-                # A zero volume byte in a MOD sample header means 64, not mute.
-                instrument_volume = instrument.volume if instrument.volume else 64
-                voice.volume = min(1.0, instrument_volume / 64.0)
+                # MOD sample-header volume is literal: 0 is silent, 64 is full.
+                voice.volume = min(1.0, instrument.volume / 64.0)
                 # MOD repeat length is in bytes. Lengths of 2 bytes or less are
                 # treated as "no loop" by Protracker-compatible players (they
                 # are commonly used for one-shot samples), so honor the whole

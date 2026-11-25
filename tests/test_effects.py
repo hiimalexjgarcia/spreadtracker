@@ -165,7 +165,7 @@ class EffectTests(unittest.TestCase):
 
         self.assertLess(break_frames, plain_frames // 4)
 
-    def test_zero_sample_volume_means_full_volume(self) -> None:
+    def test_zero_sample_header_volume_is_silent_until_cxx(self) -> None:
         rows = empty_rows(2)
         rows[0][0] = NOTE
         rows[1][0] = Cell(effect=0x0C, param=0x40)
@@ -178,7 +178,14 @@ class EffectTests(unittest.TestCase):
                 make_song(rows, volume=64), Path(temp_dir) / "full.wav"
             )
 
-        self.assertEqual(zero_volume, full_volume)
+        frames_per_row = int(6 * 8000 * 5 / (2 * 125))
+        self.assertAlmostEqual(max(abs(value) for value in zero_volume[:frames_per_row]), 0.0)
+        self.assertGreater(max(abs(value) for value in full_volume[:frames_per_row]), 0.1)
+        # C40 on the next row must still be able to make the channel audible.
+        self.assertGreater(
+            max(abs(value) for value in zero_volume[frames_per_row : frames_per_row * 2]),
+            0.1,
+        )
 
     def test_5xx_combines_volume_slide_and_portamento(self) -> None:
         rows = empty_rows(2)
