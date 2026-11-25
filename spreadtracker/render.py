@@ -165,6 +165,7 @@ class Voice:
     trem_pos: int = 0
     trem_wave: int = 0  # E7x high-nibble value: waveform bits plus hold bit
     cut_tick: int | None = None
+    delay_tick: int | None = None  # EDx - retrigger this voice on this tick
     ramp_frames: int = 0
 
 
@@ -320,6 +321,9 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             effect = cell.effect
             param = cell.param
             up, down = _nibbles(param)
+            # EDx belongs to this row only; a delay that was not reached before
+            # the row ended must not leak into the next one.
+            voice.delay_tick = None
 
             # OpenMPT clears the vibrato/tremolo flags at every row boundary;
             # only a 4xx/6xx/7xx command on this row turns the oscillator back
@@ -364,8 +368,6 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                         # DMA, resetting LFO phases, or starting an idle voice.
                         voice.target_period = pt_porta_period(cell.period, note_finetune)
                     else:
-                        voice.active = True
-                        voice.position = 0.0
                         voice.period = pt_period(cell.period, note_finetune)
                         voice.target_period = voice.period
                         if not voice.vib_wave & 0x04:
@@ -373,7 +375,14 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                         if not voice.trem_wave & 0x04:
                             voice.trem_pos = 0
                         voice.cut_tick = None
-                        voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                        if effect == 0x0E and up == 0x0D and down > 0:
+                            # EDx loads the sample and period at tick 0 but
+                            # holds the DMA retrig back until tick x.
+                            voice.delay_tick = down
+                        else:
+                            voice.active = True
+                            voice.position = 0.0
+                            voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
             elif cell.period > 0 and voice.data is not None:
                 # A note without a sample number still retriggers the selected
                 # sample in PT2, except for tone portamento which only retargets
@@ -384,8 +393,6 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 if effect in (0x03, 0x05):
                     voice.target_period = pt_porta_period(cell.period, note_finetune)
                 else:
-                    voice.active = True
-                    voice.position = 0.0
                     voice.period = pt_period(cell.period, note_finetune)
                     voice.target_period = voice.period
                     if not voice.vib_wave & 0x04:
@@ -393,7 +400,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                     if not voice.trem_wave & 0x04:
                         voice.trem_pos = 0
                     voice.cut_tick = None
-                    voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                    if effect == 0x0E and up == 0x0D and down > 0:
+                        voice.delay_tick = down
+                    else:
+                        voice.active = True
+                        voice.position = 0.0
+                        voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
 
             # Row-trigger effects. Zero nibbles mean "hold" for vibrato/tremolo
             # parameters, but clear arpeggio and slides in classic Protracker.
@@ -513,7 +525,15 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             effects_tick = tick
             if tick > 0:
                 for voice in voices:
-                    if voice.active:
+                    if voice.delay_tick is not None and tick == voice.delay_tick:
+                        # PT2's noteDelay calls doRetrg without touching LFO
+                        # state, so restart only the sample pointer here.
+                        voice.active = True
+                        voice.position = 0.0
+                        voice.cut_tick = None
+                        voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                        voice.delay_tick = None
+                    elif voice.active:
                         advance_voice_tick(voice)
 
         accumulator = 0.0

@@ -385,6 +385,40 @@ class EffectTests(unittest.TestCase):
         rms_plain = sum(value * value for value in without_cut) / len(without_cut)
         self.assertLess(rms_cut, rms_plain / 10)
 
+    def test_ed_note_delay_defers_sample_retrigger(self) -> None:
+        # EDx loads the note at tick 0 but PT2 does not restart DMA until tick x.
+        # With no earlier sample on the channel the first sound marks that tick.
+        delayed = empty_rows(2)
+        delayed[0][0] = Cell(period=428, sample=1, effect=0x0E, param=0xD3)
+        immediate = empty_rows(2)
+        immediate[0][0] = Cell(period=428, sample=1, effect=0x0E, param=0xD0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, delayed_frames = render_frames(make_song(delayed), Path(temp_dir) / "delayed.wav")
+            _, immediate_frames = render_frames(
+                make_song(immediate), Path(temp_dir) / "immediate.wav"
+            )
+
+        frames_per_tick = 8000 * 5 / (2 * 125)
+        delayed_start = next(
+            i for i, value in enumerate(delayed_frames) if abs(value) > 1e-6
+        )
+        immediate_start = next(
+            i for i, value in enumerate(immediate_frames) if abs(value) > 1e-6
+        )
+        self.assertLess(immediate_start, frames_per_tick)
+        self.assertGreater(delayed_start, frames_per_tick * 2)
+        self.assertLess(delayed_start, frames_per_tick * 4)
+
+    def test_ed_note_delay_does_not_fire_without_a_note(self) -> None:
+        rows = empty_rows(2)
+        rows[0][0] = Cell(effect=0x0E, param=0xD3)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(make_song(rows), Path(temp_dir) / "delay.wav")
+
+        self.assertTrue(all(abs(value) < 1e-6 for value in frames))
+
     def test_ee_pattern_delay_extends_row(self) -> None:
         rows = empty_rows(2)
         rows[0][0] = Cell(effect=0x0E, param=0xE1)  # EE1, global even when silent

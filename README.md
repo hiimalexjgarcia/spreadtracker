@@ -60,21 +60,22 @@ The renderer is tick-driven and currently supports:
 - `Bxx` pattern jump and `Dxx` pattern break
 - `Cxx` set volume
 - common `E` subcommands: fine portamento, vibrato/tremolo waveform, finetune,
-  retrigger, fine volume slide, note cut, and pattern delay
+  retrigger, fine volume slide, note cut, note delay, and pattern delay
 - live `Fxx` speed/tempo changes
 - 4-channel mono mix at 16-bit PCM
 - Win32 `sndPlaySound` playback from Excel
 - Python-UNO playback from Calc, with `sounddevice`/`pygame` or a system player fallback
 
-`8xx` panning, `E0x` filter, `E3x` glissando, `E6x` pattern loop, `E8x`/`EFx`
-sample manipulation, and `EDx` note delay are parsed but not rendered. Because
-the output is mono, panning does not affect the rendered WAV.
+`8xx` panning, `E0x` filter, `E3x` glissando, `E6x` pattern loop, and `E8x`/`EFx`
+sample manipulation are parsed but not rendered. Because the output is mono,
+panning does not affect the rendered WAV.
 
 Effect timing follows ProTracker 2.3D where practical, using
 [8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone) as the reference:
 the 32-entry oscillator table with an 8-bit phase, finetuned period tables, BCD
-`Dxx` rows, the one-tick delay on CIA `Fxx` tempo changes, and the `E4x`/`E7x`
-phase-hold bits. The borrowed tables are credited in
+`Dxx` rows, the one-tick delay on CIA `Fxx` tempo changes, the `E4x`/`E7x`
+phase-hold bits, and `EDx` sample retriggers delayed to tick x. The borrowed
+tables are credited in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Using it
@@ -167,7 +168,7 @@ the Calc path uses the shared Python renderer.
 
 ## Roadmap
 
-- Render the remaining `E` subcommands (`E0x`, `E3x`, `E6x`, `EDx`, `EFx`).
+- Render the remaining `E` subcommands (`E0x`, `E3x`, `E6x`, `E8x`, `EFx`).
 - Add per-channel volume/tempo automation and stereo panning.
 - Reduce the remaining fidelity gap to OpenMPT (finetune precision, filtering, and mixer edge cases).
 - Add an in-workbook editor mode: edit a selected pattern, then re-render.

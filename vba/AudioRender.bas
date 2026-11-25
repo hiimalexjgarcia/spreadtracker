@@ -10,7 +10,8 @@ Option Explicit
 ' row where they occur. It renders note triggers, sample loops, arpeggio
 ' (0xx), portamento (1xx/2xx/3xx/5xx), vibrato (4xx/6xx), tremolo (7xx),
 ' sample offsets (9xx), volume slides (Axx/5xx/6xx), pattern jump/break
-' (Bxx/Dxx), set volume (Cxx), common E subcommands and speed/tempo (Fxx).
+' (Bxx/Dxx), set volume (Cxx), common E subcommands (including EDx note delay)
+' and speed/tempo (Fxx).
 ' MOD sample bytes are decoded as signed 8-bit PCM. The mixer uses linear
 ' interpolation and a short attack ramp. 8xx panning is parsed but inaudible
 ' because the output is mono.
@@ -86,6 +87,7 @@ Private vTremActive(0 To CHANNEL_COUNT - 1) As Boolean
 Private vTremPos(0 To CHANNEL_COUNT - 1) As Long
 Private vTremWave(0 To CHANNEL_COUNT - 1) As Long ' E7x high-nibble value: waveform + hold bit
 Private vCutTick(0 To CHANNEL_COUNT - 1) As Long
+Private vDelayTick(0 To CHANNEL_COUNT - 1) As Long ' EDx retrigger tick, -1 = none
 Private vRamp(0 To CHANNEL_COUNT - 1) As Long
 
 ' ---------------------------------------------------------------------------
@@ -165,7 +167,19 @@ Public Function RenderSongToWav() As String
             mEffectsTick = mTick
             If mTick > 0 Then
                 For ch = 0 To CHANNEL_COUNT - 1
+                    If vDelayTick(ch) >= 0 Then
+                        If mTick = vDelayTick(ch) Then
+                            ' EDx: restart the sample without touching LFO state.
+                            vActive(ch) = True
+                            vPos(ch) = 0#
+                            vCutTick(ch) = -1
+                            vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                            vDelayTick(ch) = -1
+                            GoTo NextTickChannel
+                        End If
+                    End If
                     If vActive(ch) Then ApplyTickEffects ch
+NextTickChannel:
                 Next ch
             End If
         End If
@@ -247,6 +261,7 @@ Private Sub InitMixer()
         vTremPos(ch) = 0
         vTremWave(ch) = 0
         vCutTick(ch) = -1
+        vDelayTick(ch) = -1
         vRamp(ch) = 0
     Next ch
 
@@ -334,6 +349,7 @@ Private Sub ProcessRow()
     If mRow >= PATTERN_ROWS Then Exit Sub
 
     Dim ch As Long, e As Long, p As Long, hi As Long, lo As Long, noteFine As Long
+    Dim delayed As Boolean
     Dim cell As TNote
     Dim inst As TInstrument
 
@@ -343,6 +359,9 @@ Private Sub ProcessRow()
         p = cell.Param
         hi = p \ 16
         lo = p Mod 16
+        ' EDx belongs to this row only.
+        vDelayTick(ch) = -1
+        delayed = (e = 14 And hi = 13 And lo > 0)
 
         ' OpenMPT clears the vibrato/tremolo flags at every row boundary; only
         ' a 4xx/6xx/7xx command on this row turns the oscillator back on. Speed
@@ -381,14 +400,20 @@ Private Sub ProcessRow()
                     ' resetting LFO phases, or starting an idle voice.
                     vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
                 Else
-                    vActive(ch) = True
-                    vPos(ch) = 0#
                     vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
                     vTarget(ch) = vPeriod(ch)
                     If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
                     If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
                     vCutTick(ch) = -1
-                    vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                    If delayed Then
+                        ' PT2 loads the sample and period at tick 0 but holds
+                        ' the DMA retrig back until tick x.
+                        vDelayTick(ch) = lo
+                    Else
+                        vActive(ch) = True
+                        vPos(ch) = 0#
+                        vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                    End If
                 End If
             End If
         ElseIf cell.Period > 0 And cell.Sample = 0 And Len(vData(ch)) > 0 Then
@@ -400,14 +425,18 @@ Private Sub ProcessRow()
             If e = 3 Or e = 5 Then
                 vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
             Else
-                vActive(ch) = True
-                vPos(ch) = 0#
                 vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
                 vTarget(ch) = vPeriod(ch)
                 If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
                 If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
                 vCutTick(ch) = -1
-                vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                If delayed Then
+                    vDelayTick(ch) = lo
+                Else
+                    vActive(ch) = True
+                    vPos(ch) = 0#
+                    vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                End If
             End If
         End If
 
