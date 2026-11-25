@@ -88,6 +88,14 @@ Private vTremPos(0 To CHANNEL_COUNT - 1) As Long
 Private vTremWave(0 To CHANNEL_COUNT - 1) As Long ' E7x high-nibble value: waveform + hold bit
 Private vCutTick(0 To CHANNEL_COUNT - 1) As Long
 Private vDelayTick(0 To CHANNEL_COUNT - 1) As Long ' EDx retrigger tick, -1 = none
+' PT2 loads EDx note data at tick 0 but leaves Paula on the old sample until x.
+Private vPendingData(0 To CHANNEL_COUNT - 1) As Variant
+Private vPendingPeriod(0 To CHANNEL_COUNT - 1) As Double
+Private vPendingTarget(0 To CHANNEL_COUNT - 1) As Double
+Private vPendingLoop(0 To CHANNEL_COUNT - 1) As Boolean
+Private vPendingRepStart(0 To CHANNEL_COUNT - 1) As Long
+Private vPendingRepEnd(0 To CHANNEL_COUNT - 1) As Long
+Private vPendingFine(0 To CHANNEL_COUNT - 1) As Long
 Private vRamp(0 To CHANNEL_COUNT - 1) As Long
 
 ' ---------------------------------------------------------------------------
@@ -169,12 +177,25 @@ Public Function RenderSongToWav() As String
                 For ch = 0 To CHANNEL_COUNT - 1
                     If vDelayTick(ch) >= 0 Then
                         If mTick = vDelayTick(ch) Then
-                            ' EDx: restart the sample without touching LFO state.
-                            vActive(ch) = True
+                            ' EDx: install the note data loaded at tick 0 and
+                            ' restart DMA without touching LFO state.
+                            vData(ch) = vPendingData(ch)
+                            vLen(ch) = 0
+                            If Len(vData(ch)) > 0 Then vLen(ch) = Len(vData(ch))
+                            vLoop(ch) = vPendingLoop(ch)
+                            vRepStart(ch) = vPendingRepStart(ch)
+                            vRepEnd(ch) = vPendingRepEnd(ch)
+                            vFine(ch) = vPendingFine(ch)
+                            If vPendingPeriod(ch) > 0# Then vPeriod(ch) = vPendingPeriod(ch)
+                            If vPendingTarget(ch) > 0# Then vTarget(ch) = vPendingTarget(ch)
+                            vActive(ch) = Len(vData(ch)) > 0
                             vPos(ch) = 0#
                             vCutTick(ch) = -1
                             vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
                             vDelayTick(ch) = -1
+                            vPendingData(ch) = Empty
+                            vPendingPeriod(ch) = 0#
+                            vPendingTarget(ch) = 0#
                             GoTo NextTickChannel
                         End If
                     End If
@@ -262,6 +283,13 @@ Private Sub InitMixer()
         vTremWave(ch) = 0
         vCutTick(ch) = -1
         vDelayTick(ch) = -1
+        vPendingData(ch) = Empty
+        vPendingPeriod(ch) = 0#
+        vPendingTarget(ch) = 0#
+        vPendingLoop(ch) = False
+        vPendingRepStart(ch) = 0
+        vPendingRepEnd(ch) = 0
+        vPendingFine(ch) = 0
         vRamp(ch) = 0
     Next ch
 
@@ -361,6 +389,9 @@ Private Sub ProcessRow()
         lo = p Mod 16
         ' EDx belongs to this row only.
         vDelayTick(ch) = -1
+        vPendingData(ch) = Empty
+        vPendingPeriod(ch) = 0#
+        vPendingTarget(ch) = 0#
         delayed = (e = 14 And hi = 13 And lo > 0)
 
         ' OpenMPT clears the vibrato/tremolo flags at every row boundary; only
@@ -376,40 +407,67 @@ Private Sub ProcessRow()
                 mSampleLoaded(cell.Sample) = True
             End If
 
-            ' PT2 loads the sample pointer, volume, loop and finetune from the
-            ' cell even when there is no note. An idle channel stays idle, but
-            ' the selected sample is ready for a later note with no sample no.
-            vData(ch) = mSampleCache(cell.Sample)
-            vLen(ch) = inst.Bytes
-            vVol(ch) = CSng(inst.Volume / 64#)
-            vLoop(ch) = inst.RepeatLength > 2
-            vRepStart(ch) = inst.RepeatStart
-            If vLoop(ch) Then
-                vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
-                If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
-            Else
-                vRepEnd(ch) = inst.Bytes
-            End If
-            vFine(ch) = inst.Finetune And &HF
+            Dim noteDelay As Boolean
+            Dim sampleLoop As Boolean
+            Dim sampleRepStart As Long
+            Dim sampleRepEnd As Long
+            Dim sampleFine As Long
+            Dim sampleNoteFine As Long
 
-            If cell.Period > 0 Then
-                noteFine = vFine(ch)
-                If e = 14 And hi = 5 Then noteFine = lo
-                If e = 3 Or e = 5 Then
-                    ' Tone portamento sets a target without retriggering DMA,
-                    ' resetting LFO phases, or starting an idle voice.
-                    vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
-                Else
-                    vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
-                    vTarget(ch) = vPeriod(ch)
-                    If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
-                    If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
-                    vCutTick(ch) = -1
-                    If delayed Then
-                        ' PT2 loads the sample and period at tick 0 but holds
-                        ' the DMA retrig back until tick x.
-                        vDelayTick(ch) = lo
+            noteDelay = (e = 14 And hi = 13)
+            sampleLoop = inst.RepeatLength > 2
+            sampleRepStart = inst.RepeatStart
+            If sampleLoop Then
+                sampleRepEnd = inst.RepeatStart + inst.RepeatLength
+                If sampleRepEnd > inst.Bytes Then sampleRepEnd = inst.Bytes
+            Else
+                sampleRepEnd = inst.Bytes
+            End If
+            sampleFine = inst.Finetune And &HF
+            sampleNoteFine = sampleFine
+            If e = 14 And hi = 5 Then sampleNoteFine = lo
+
+            ' PT2 writes the newly selected sample's volume at tick 0 even
+            ' when EDx postpones the sample pointer and period.
+            vVol(ch) = CSng(inst.Volume / 64#)
+
+            If delayed And cell.Period > 0 Then
+                ' EDx with x > 0 leaves Paula playing the old sample at the old
+                ' period until tick x.
+                vDelayTick(ch) = lo
+                vPendingData(ch) = mSampleCache(cell.Sample)
+                vPendingPeriod(ch) = PeriodForNote(cell.Period, sampleNoteFine)
+                vPendingTarget(ch) = vPendingPeriod(ch)
+                vPendingLoop(ch) = sampleLoop
+                vPendingRepStart(ch) = sampleRepStart
+                vPendingRepEnd(ch) = sampleRepEnd
+                vPendingFine(ch) = sampleFine
+                vCutTick(ch) = -1
+            Else
+                ' PT2 loads the sample pointer, loop and finetune from the cell
+                ' even when there is no note. An idle channel stays idle, but
+                ' the selected sample is ready for a later note without one.
+                vData(ch) = mSampleCache(cell.Sample)
+                vLen(ch) = inst.Bytes
+                vLoop(ch) = sampleLoop
+                vRepStart(ch) = sampleRepStart
+                vRepEnd(ch) = sampleRepEnd
+                vFine(ch) = sampleFine
+
+                If cell.Period > 0 Then
+                    If e = 3 Or e = 5 Then
+                        ' Tone portamento sets a target without retriggering
+                        ' DMA, resetting LFO phases, or starting an idle voice.
+                        vTarget(ch) = PortaPeriodForNote(cell.Period, sampleNoteFine)
                     Else
+                        vPeriod(ch) = PeriodForNote(cell.Period, sampleNoteFine)
+                        vTarget(ch) = vPeriod(ch)
+                        ' EDx skips PT2's LFO phase reset, including ED0.
+                        If Not noteDelay Then
+                            If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
+                            If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
+                        End If
+                        vCutTick(ch) = -1
                         vActive(ch) = True
                         vPos(ch) = 0#
                         vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
@@ -422,21 +480,29 @@ Private Sub ProcessRow()
             ' the slide.
             noteFine = vFine(ch)
             If e = 14 And hi = 5 Then noteFine = lo
-            If e = 3 Or e = 5 Then
+            If delayed Then
+                vDelayTick(ch) = lo
+                vPendingData(ch) = vData(ch)
+                vPendingPeriod(ch) = PeriodForNote(cell.Period, noteFine)
+                vPendingTarget(ch) = vPendingPeriod(ch)
+                vPendingLoop(ch) = vLoop(ch)
+                vPendingRepStart(ch) = vRepStart(ch)
+                vPendingRepEnd(ch) = vRepEnd(ch)
+                vPendingFine(ch) = vFine(ch)
+                vCutTick(ch) = -1
+            ElseIf e = 3 Or e = 5 Then
                 vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
             Else
                 vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
                 vTarget(ch) = vPeriod(ch)
-                If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
-                If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
-                vCutTick(ch) = -1
-                If delayed Then
-                    vDelayTick(ch) = lo
-                Else
-                    vActive(ch) = True
-                    vPos(ch) = 0#
-                    vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                If Not (e = 14 And hi = 13) Then
+                    If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
+                    If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
                 End If
+                vCutTick(ch) = -1
+                vActive(ch) = True
+                vPos(ch) = 0#
+                vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
             End If
         End If
 

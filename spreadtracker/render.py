@@ -166,6 +166,15 @@ class Voice:
     trem_wave: int = 0  # E7x high-nibble value: waveform bits plus hold bit
     cut_tick: int | None = None
     delay_tick: int | None = None  # EDx - retrigger this voice on this tick
+    # PT2's EDx loads the new note internally at tick 0 but leaves Paula playing
+    # the previous sample until tick x. Keep that new state separate.
+    pending_data: bytes | None = None
+    pending_period: float | None = None
+    pending_target: float | None = None
+    pending_looping: bool = False
+    pending_loop_start: int = 0
+    pending_loop_end: int = 0
+    pending_fine_tune: int = 0
     ramp_frames: int = 0
 
 
@@ -324,6 +333,8 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             # EDx belongs to this row only; a delay that was not reached before
             # the row ended must not leak into the next one.
             voice.delay_tick = None
+            voice.pending_data = None
+            voice.pending_period = None
 
             # OpenMPT clears the vibrato/tremolo flags at every row boundary;
             # only a 4xx/6xx/7xx command on this row turns the oscillator back
@@ -332,6 +343,8 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             voice.vib_active = effect in (0x04, 0x06)
             voice.trem_active = effect == 0x07
 
+            note_delay = effect == 0x0E and up == 0x0D
+
             if cell.sample > 0:
                 instrument = song.instruments.get(cell.sample)
                 sample_data = song.sample_data.get(cell.sample)
@@ -339,47 +352,65 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                     voice.active = False
                     continue
 
-                # PT2 loads the sample pointer, volume, loop and finetune from
-                # the cell even when there is no note. An idle channel stays
-                # idle, but the selected sample is ready for a later note with
-                # no sample number.
-                voice.data = sample_data
-                voice.length = len(sample_data)
-                # MOD sample-header volume is literal: 0 is silent, 64 full.
+                # PT2 writes the newly selected sample's volume at tick 0 even
+                # when EDx postpones the sample pointer and period.
                 voice.volume = min(1.0, instrument.volume / 64.0)
                 # MOD repeat length is in bytes. Lengths of 2 bytes or less are
                 # "no loop" in Protracker-compatible players, so honor the
                 # whole sample instead of a silent 2-byte loop.
-                voice.looping = instrument.repeat_length > 2
-                voice.loop_start = instrument.repeat_start
-                voice.loop_end = (
+                looping = instrument.repeat_length > 2
+                loop_start = instrument.repeat_start
+                loop_end = (
                     min(instrument.repeat_start + instrument.repeat_length, len(sample_data))
-                    if voice.looping
+                    if looping
                     else len(sample_data)
                 )
-                voice.fine_tune = instrument.finetune & 0x0F
+                fine_tune = instrument.finetune & 0x0F
+                note_finetune = fine_tune
+                if effect == 0x0E and up == 0x05:
+                    note_finetune = down & 0x0F
 
-                if cell.period > 0:
-                    note_finetune = voice.fine_tune
-                    if effect == 0x0E and up == 0x05:
-                        note_finetune = down & 0x0F
-                    if effect in (0x03, 0x05):
-                        # Tone portamento sets a target without retriggering
-                        # DMA, resetting LFO phases, or starting an idle voice.
-                        voice.target_period = pt_porta_period(cell.period, note_finetune)
-                    else:
-                        voice.period = pt_period(cell.period, note_finetune)
-                        voice.target_period = voice.period
-                        if not voice.vib_wave & 0x04:
-                            voice.vib_pos = 0
-                        if not voice.trem_wave & 0x04:
-                            voice.trem_pos = 0
-                        voice.cut_tick = None
-                        if effect == 0x0E and up == 0x0D and down > 0:
-                            # EDx loads the sample and period at tick 0 but
-                            # holds the DMA retrig back until tick x.
-                            voice.delay_tick = down
+                # EDx with x > 0 changes Paula's internal note data at tick 0,
+                # but the DMA channel keeps playing the old sample at the old
+                # period until tick x.
+                delay_note = note_delay and down > 0 and cell.period > 0
+                if delay_note:
+                    voice.delay_tick = down
+                    voice.pending_data = sample_data
+                    voice.pending_period = pt_period(cell.period, note_finetune)
+                    voice.pending_target = voice.pending_period
+                    voice.pending_looping = looping
+                    voice.pending_loop_start = loop_start
+                    voice.pending_loop_end = loop_end
+                    voice.pending_fine_tune = fine_tune
+                    voice.cut_tick = None
+                else:
+                    # PT2 loads the sample pointer, loop and finetune from the
+                    # cell even when there is no note. An idle channel stays
+                    # idle, but the selected sample is ready for a later note
+                    # with no sample number.
+                    voice.data = sample_data
+                    voice.length = len(sample_data)
+                    voice.looping = looping
+                    voice.loop_start = loop_start
+                    voice.loop_end = loop_end
+                    voice.fine_tune = fine_tune
+
+                    if cell.period > 0:
+                        if effect in (0x03, 0x05):
+                            # Tone portamento sets a target without retriggering
+                            # DMA, resetting LFO phases, or starting an idle voice.
+                            voice.target_period = pt_porta_period(cell.period, note_finetune)
                         else:
+                            voice.period = pt_period(cell.period, note_finetune)
+                            voice.target_period = voice.period
+                            # EDx skips Pt2's LFO phase reset, including ED0.
+                            if not note_delay:
+                                if not voice.vib_wave & 0x04:
+                                    voice.vib_pos = 0
+                                if not voice.trem_wave & 0x04:
+                                    voice.trem_pos = 0
+                            voice.cut_tick = None
                             voice.active = True
                             voice.position = 0.0
                             voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
@@ -390,22 +421,31 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 note_finetune = voice.fine_tune
                 if effect == 0x0E and up == 0x05:
                     note_finetune = down & 0x0F
-                if effect in (0x03, 0x05):
+                delay_note = note_delay and down > 0
+                if delay_note:
+                    voice.delay_tick = down
+                    voice.pending_data = voice.data
+                    voice.pending_period = pt_period(cell.period, note_finetune)
+                    voice.pending_target = voice.pending_period
+                    voice.pending_looping = voice.looping
+                    voice.pending_loop_start = voice.loop_start
+                    voice.pending_loop_end = voice.loop_end
+                    voice.pending_fine_tune = voice.fine_tune
+                    voice.cut_tick = None
+                elif effect in (0x03, 0x05):
                     voice.target_period = pt_porta_period(cell.period, note_finetune)
                 else:
                     voice.period = pt_period(cell.period, note_finetune)
                     voice.target_period = voice.period
-                    if not voice.vib_wave & 0x04:
-                        voice.vib_pos = 0
-                    if not voice.trem_wave & 0x04:
-                        voice.trem_pos = 0
+                    if not note_delay:
+                        if not voice.vib_wave & 0x04:
+                            voice.vib_pos = 0
+                        if not voice.trem_wave & 0x04:
+                            voice.trem_pos = 0
                     voice.cut_tick = None
-                    if effect == 0x0E and up == 0x0D and down > 0:
-                        voice.delay_tick = down
-                    else:
-                        voice.active = True
-                        voice.position = 0.0
-                        voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                    voice.active = True
+                    voice.position = 0.0
+                    voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
 
             # Row-trigger effects. Zero nibbles mean "hold" for vibrato/tremolo
             # parameters, but clear arpeggio and slides in classic Protracker.
@@ -526,13 +566,31 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             if tick > 0:
                 for voice in voices:
                     if voice.delay_tick is not None and tick == voice.delay_tick:
-                        # PT2's noteDelay calls doRetrg without touching LFO
-                        # state, so restart only the sample pointer here.
-                        voice.active = True
+                        # PT2's noteDelay calls doRetrg with the note data that
+                        # was loaded at tick 0. The old sample keeps playing
+                        # until now, and the LFO phases are left untouched.
+                        voice.data = voice.pending_data
+                        voice.length = len(voice.data) if voice.data else 0
+                        voice.looping = voice.pending_looping
+                        voice.loop_start = voice.pending_loop_start
+                        voice.loop_end = voice.pending_loop_end
+                        voice.fine_tune = voice.pending_fine_tune
+                        voice.period = (
+                            voice.pending_period if voice.pending_period is not None else voice.period
+                        )
+                        voice.target_period = (
+                            voice.pending_target
+                            if voice.pending_target is not None
+                            else voice.target_period
+                        )
+                        voice.active = voice.data is not None
                         voice.position = 0.0
                         voice.cut_tick = None
                         voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
                         voice.delay_tick = None
+                        voice.pending_data = None
+                        voice.pending_period = None
+                        voice.pending_target = None
                     elif voice.active:
                         advance_voice_tick(voice)
 

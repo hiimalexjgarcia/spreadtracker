@@ -74,8 +74,8 @@ Effect timing follows ProTracker 2.3D where practical, using
 [8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone) as the reference:
 the 32-entry oscillator table with an 8-bit phase, finetuned period tables, BCD
 `Dxx` rows, the one-tick delay on CIA `Fxx` tempo changes, the `E4x`/`E7x`
-phase-hold bits, and `EDx` sample retriggers delayed to tick x. The borrowed
-tables are credited in
+phase-hold bits, and `EDx`, which loads the note at tick 0 but keeps the old
+sample playing until the retrigger on tick x. The borrowed tables are credited in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Using it

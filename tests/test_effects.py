@@ -65,6 +65,40 @@ def empty_rows(count: int = 64) -> list[list[Cell]]:
     return [[Cell() for _ in range(4)] for _ in range(count)]
 
 
+def make_two_sample_song(rows: list[list[Cell]], *, speed: float = 7.0) -> Song:
+    """Song with a positive and a negative sample for retrigger timing checks."""
+    return Song(
+        title="sample-switch-test",
+        order=[0],
+        patterns=[rows],
+        instruments={
+            1: Instrument(
+                name="positive",
+                length=64,
+                finetune=0,
+                volume=64,
+                repeat_start=0,
+                repeat_length=64,
+            ),
+            2: Instrument(
+                name="negative",
+                length=64,
+                finetune=0,
+                volume=64,
+                repeat_start=0,
+                repeat_length=64,
+            ),
+        },
+        sample_data={1: bytes([0x40] * 64), 2: bytes([0x80] * 64)},
+        settings=RenderSettings(
+            tempo=125.0,
+            speed=speed,
+            sample_rate=8000,
+            orders=1,
+        ),
+    )
+
+
 def render_frames(song: Song, path: Path) -> tuple[int, list[float]]:
     render_song(song, path)
     with wave.open(str(path), "rb") as wav:
@@ -418,6 +452,33 @@ class EffectTests(unittest.TestCase):
             _, frames = render_frames(make_song(rows), Path(temp_dir) / "delay.wav")
 
         self.assertTrue(all(abs(value) < 1e-6 for value in frames))
+
+    def test_ed_note_delay_keeps_old_sample_until_tick_x_at_speed_7(self) -> None:
+        # Pattern 33 of gslinger.mod uses ED1/ED3/ED4 at speed 7. PT2 loads
+        # the new note internally at tick 0, but Paula keeps playing the old
+        # sample until the delayed retrigger.
+        rows = empty_rows(2)
+        rows[0][0] = Cell(period=428, sample=1)
+        rows[1][0] = Cell(period=320, sample=2, effect=0x0E, param=0xD3)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_two_sample_song(rows), Path(temp_dir) / "delay.wav"
+            )
+
+        frames_per_tick = 8000 * 5 / (2 * 125)
+        row_start = int(7 * frames_per_tick)
+        tick_means = [
+            sum(
+                frames[
+                    row_start + i * int(frames_per_tick) : row_start + (i + 1) * int(frames_per_tick)
+                ]
+            )
+            / int(frames_per_tick)
+            for i in range(7)
+        ]
+        self.assertTrue(all(value > 0.01 for value in tick_means[:3]))
+        self.assertTrue(all(value < -0.01 for value in tick_means[3:]))
 
     def test_ee_pattern_delay_extends_row(self) -> None:
         rows = empty_rows(2)
