@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import sys
 import wave
 from array import array
@@ -17,20 +16,16 @@ from .model import (
     Song,
 )
 
-# MOD/XM oscillator waveforms are 64 points long and the 4xx/6xx speed advances
-# that phase one point per tick. The sine table is the standard 64-point table
-# sampled from a sine wave, not the older 32-entry Protracker table.
-WAVE_PHASE_STEPS = 64
-WAVE_TABLE: tuple[int, ...] = tuple(
-    int(round(127 * math.sin(2 * math.pi * i / WAVE_PHASE_STEPS)))
-    for i in range(WAVE_PHASE_STEPS)
-)
-# OpenMPT's deterministic random waveform, used by E4x/E7x type 3.
-RANDOM_WAVE_TABLE: tuple[int, ...] = (
-    98, -127, -43, 88, 102, 41, -65, -94, 125, 20, -71, -86, -70, -32, -16, -96,
-    17, 72, 107, -5, 116, -69, -62, -40, 10, -61, 65, 109, -18, -38, -13, -76,
-    -23, 88, 21, -94, 8, 106, 21, -112, 6, 109, 20, -88, -30, 9, -127, 118,
-    42, -34, 89, -4, -51, -72, 21, -29, 112, 123, 84, -101, -92, 98, -54, -95,
+# ProTracker 2.3D keeps an 8-bit phase counter, advances it by 4 * 4xx speed,
+# and indexes a 32-step table with (phase >> 2) & 31. The table itself is
+# unsigned; phases 128..255 make the oscillator negative. Waveforms 2 and 3 are
+# both square waves in PT2. Table values follow 8bitbubsy/pt2-clone
+# (pt2_tables.c), BSD-3-Clause; see THIRD_PARTY_NOTICES.md.
+WAVE_PHASE_STEPS = 256
+WAVE_TABLE_STEPS = 32
+WAVE_TABLE: tuple[int, ...] = (
+    0, 24, 49, 74, 97, 120, 141, 161, 180, 197, 212, 224, 235, 244, 250, 253,
+    255, 253, 250, 244, 235, 224, 212, 197, 180, 161, 141, 120, 97, 74, 49, 24,
 )
 
 # Mixer options kept as constants so the Python and VBA paths stay in step.
@@ -63,20 +58,26 @@ def _nibbles(param: int) -> tuple[int, int]:
     return (param >> 4) & 0x0F, param & 0x0F
 
 
-def wave_value(position: int, waveform: int = 0) -> int:
-    """Return the MOD oscillator delta for a 64-point phase position.
+def wave_value(position: int, waveform: int = 0, sign_position: int | None = None) -> int:
+    """Return the signed ProTracker 2.3D oscillator delta for a raw phase.
 
-    The ramp value is already sign-corrected for MOD/XM playback, where E4x
-    type 1 uses an inverted ramp compared with other formats.
+    ``sign_position`` mirrors PT2's tremolo ramp bug: the ramp magnitude comes
+    from the tremolo phase, but which half of the ramp is used comes from the
+    vibrato phase. The returned sign always follows ``position``.
     """
     phase = position % WAVE_PHASE_STEPS
-    if waveform == 1:  # ramp down / saw down (MOD/XM inverted)
-        return phase * 4 - (0 if phase < 32 else 255)
-    if waveform == 2:  # square
-        return 127 if phase < 32 else -127
-    if waveform == 3:  # random
-        return RANDOM_WAVE_TABLE[phase]
-    return WAVE_TABLE[phase]
+    index = (phase >> 2) & (WAVE_TABLE_STEPS - 1)
+    sign_phase = phase if sign_position is None else sign_position % WAVE_PHASE_STEPS
+    waveform &= 0x03
+
+    if waveform == 1:  # ramp
+        magnitude = (255 - index * 8) if sign_phase >= 128 else index * 8
+    elif waveform >= 2:  # square; PT2 treats type 3 like type 2
+        magnitude = 255
+    else:
+        magnitude = WAVE_TABLE[index]
+
+    return -magnitude if phase >= 128 else magnitude
 
 
 @dataclass
@@ -105,12 +106,12 @@ class Voice:
     vib_depth: int = 0
     vib_active: bool = False
     vib_pos: int = 0
-    vib_wave: int = 0
+    vib_wave: int = 0  # E4x low nibble: waveform bits plus phase-hold bit
     trem_speed: int = 0
     trem_depth: int = 0
     trem_active: bool = False
     trem_pos: int = 0
-    trem_wave: int = 0
+    trem_wave: int = 0  # E7x high-nibble value: waveform bits plus hold bit
     cut_tick: int | None = None
     ramp_frames: int = 0
 
@@ -122,22 +123,23 @@ def advance_voice_tick(voice: Voice) -> None:
             0.0,
             min(1.0, voice.volume + (voice.slide_up - voice.slide_down) / 64.0),
         )
+    # ProTracker clamps 1xx/2xx to the lowest/highest period in its table.
     if voice.port_up:
-        voice.period = max(1.0, voice.period - voice.port_up)
+        voice.period = max(113.0, voice.period - voice.port_up)
     if voice.port_down:
-        voice.period += voice.port_down
+        voice.period = min(856.0, voice.period + voice.port_down)
     if voice.port_speed and voice.target_period:
         if voice.period < voice.target_period:
             voice.period = min(voice.target_period, voice.period + voice.port_speed)
         elif voice.period > voice.target_period:
             voice.period = max(voice.target_period, voice.period - voice.port_speed)
 
-    # OpenMPT clears the vibrato/tremolo flags at every row boundary, so the
-    # phase only advances on rows that carry an active 4xx/6xx/7xx command.
+    # A row without 4xx/6xx/7xx clears that channel's command, so the phase
+    # only advances on rows carrying an active vibrato/tremolo command.
     if voice.vib_active:
-        voice.vib_pos = (voice.vib_pos + voice.vib_speed) % WAVE_PHASE_STEPS
+        voice.vib_pos = (voice.vib_pos + 4 * voice.vib_speed) % WAVE_PHASE_STEPS
     if voice.trem_active:
-        voice.trem_pos = (voice.trem_pos + voice.trem_speed) % WAVE_PHASE_STEPS
+        voice.trem_pos = (voice.trem_pos + 4 * voice.trem_speed) % WAVE_PHASE_STEPS
 
 
 def effective_period(voice: Voice, tick: int) -> float:
@@ -148,14 +150,14 @@ def effective_period(voice: Voice, tick: int) -> float:
         if semitones:
             period *= 2.0 ** (-semitones / 12.0)
 
-    # Protracker-compatible playback does not apply vibrato on the first tick
-    # of a row. Afterwards MOD vibrato is a linear period slide, with the
-    # table delta scaled by depth / 64 (truncated toward zero like OpenMPT).
-    # The stored phase has already been advanced for this tick, so use the
-    # previous phase: OpenMPT reads the oscillator, then advances it.
+    # ProTracker 2.3D does not apply vibrato on the first tick of a row.
+    # Afterwards its unsigned table delta is scaled by depth / 128 and added to
+    # or subtracted from the period according to the phase's high bit. The
+    # stored phase has already advanced for this tick, so read the previous
+    # phase like the original replay routine.
     if voice.vib_active and voice.vib_depth and tick > 0:
-        phase = (voice.vib_pos - voice.vib_speed) % WAVE_PHASE_STEPS
-        period += int(wave_value(phase, voice.vib_wave) * voice.vib_depth / 64)
+        phase = (voice.vib_pos - 4 * voice.vib_speed) % WAVE_PHASE_STEPS
+        period += int(wave_value(phase, voice.vib_wave) * voice.vib_depth / 128)
 
     if voice.fine_tune:
         fine = voice.fine_tune if voice.fine_tune < 8 else voice.fine_tune - 16
@@ -224,6 +226,7 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
     current_pattern: list[list[Cell]] | None = None
     pending_jump: int | None = None
     pending_break: int | None = None
+    pending_tempo: float | None = None
     pattern_delay_rows = 0
 
     # Upper bound for dynamic speed changes; rendering stops as soon as the
@@ -247,7 +250,7 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
 
     def process_row() -> bool:
         nonlocal order_pos, row, ticks_per_row, tempo, frames_per_tick
-        nonlocal pending_jump, pending_break, pattern_delay_rows
+        nonlocal pending_jump, pending_break, pending_tempo, pattern_delay_rows
 
         if order_pos >= orders:
             return False
@@ -304,8 +307,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                         else:
                             voice.period = float(cell.period)
                             voice.target_period = voice.period
-                        voice.vib_pos = 0
-                        voice.trem_pos = 0
+                        # PT2 only resets an oscillator phase when its waveform
+                        # control does not have the "keep phase" bit set.
+                        if not voice.vib_wave & 0x04:
+                            voice.vib_pos = 0
+                        if not voice.trem_wave & 0x04:
+                            voice.trem_pos = 0
                         voice.cut_tick = None
                         voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
                     # A sample number without a note keeps the current period
@@ -330,8 +337,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 else:
                     voice.period = float(cell.period)
                     voice.target_period = voice.period
-                voice.vib_pos = 0
-                voice.trem_pos = 0
+                if not voice.vib_wave & 0x04:
+                    voice.vib_pos = 0
+                if not voice.trem_wave & 0x04:
+                    voice.trem_pos = 0
 
             # Row-trigger effects. Zero nibbles mean "hold" for vibrato/tremolo
             # parameters, but clear arpeggio and slides in classic Protracker.
@@ -370,13 +379,16 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             if effect == 0x0B:  # Bxx - jump at the end of this pattern
                 pending_jump = min(param, len(order) - 1)
             elif effect == 0x0D and pending_jump is None:  # Dxx - pattern break
-                pending_break = min(param, PATTERN_ROWS - 1)
+                # ProTracker interprets the byte as BCD and maps values above
+                # the last row back to row 0, rather than clamping to row 63.
+                bcd_break = up * 10 + down
+                pending_break = bcd_break if bcd_break < PATTERN_ROWS else 0
             elif effect == 0x0F and param:  # Fxx - speed / tempo
                 if param <= 0x1F:
                     ticks_per_row = param
                 else:
-                    tempo = float(param)
-                    frames_per_tick = sample_rate * 5.0 / (2.0 * tempo)
+                    # PT's CIA tempo change is delayed until the next tick.
+                    pending_tempo = float(param)
 
             if effect == 0x0E and up == 0x0E:  # EEx - pattern delay is global
                 pattern_delay_rows = down
@@ -386,19 +398,18 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
 
             if effect == 0x0E:  # Exy - extended commands
                 if up == 0x01:  # E1x - fine portamento up
-                    voice.period = max(1.0, voice.period - down)
+                    voice.period = max(113.0, voice.period - down)
                 elif up == 0x02:  # E2x - fine portamento down
-                    voice.period += down
-                elif up == 0x04:  # E4x - vibrato waveform
-                    voice.vib_wave = down & 0x03
+                    voice.period = min(856.0, voice.period + down)
+                elif up == 0x04:  # E4x - vibrato waveform/phase control
+                    voice.vib_wave = down
                 elif up == 0x05:  # E5x - set finetune
                     voice.fine_tune = down & 0x0F
-                elif up == 0x07:  # E7x - tremolo waveform
-                    voice.trem_wave = down & 0x03
+                elif up == 0x07:  # E7x - tremolo waveform/phase control
+                    voice.trem_wave = down
                 elif up == 0x09:  # E9x - retrigger sample
+                    # PT2's doRetrg restarts the sample without resetting LFOs.
                     voice.position = 0.0
-                    voice.vib_pos = 0
-                    voice.trem_pos = 0
                 elif up == 0x0A:  # EAx - fine volume slide up
                     voice.volume = min(1.0, voice.volume + 1.0 / 64.0)
                 elif up == 0x0B:  # EBx - fine volume slide down
@@ -472,16 +483,15 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 level *= min(1.0, voice.ramp_frames / ramp_length)
                 voice.ramp_frames -= 1
 
-            # Tremolo also waits until the first tick is over in MOD playback,
-            # and the MOD volume delta is depth / 32 rather than depth / 64.
-            # Like vibrato, the stored phase is one advance ahead of the value
-            # OpenMPT uses for the current tick.
+            # PT2 skips tremolo on tick 0. Its table delta is scaled by depth
+            # / 64 in 0..64 volume units, then normalized to 0..1 here. PT2's
+            # ramp waveform also takes its sign from the vibrato phase.
             if voice.trem_active and voice.trem_depth and tick > 0:
-                phase = (voice.trem_pos - voice.trem_speed) % WAVE_PHASE_STEPS
+                phase = (voice.trem_pos - 4 * voice.trem_speed) % WAVE_PHASE_STEPS
                 trem = (
-                    wave_value(phase, voice.trem_wave)
+                    wave_value(phase, voice.trem_wave, sign_position=voice.vib_pos)
                     * voice.trem_depth
-                    / (32.0 * 64.0)
+                    / (64.0 * 64.0)
                 )
                 level = max(0.0, min(1.0, level + trem))
 
@@ -493,6 +503,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
         tick_phase += 1.0
         while tick_phase >= frames_per_tick and order_pos < orders:
             tick_phase -= frames_per_tick
+            if pending_tempo is not None:
+                tempo = pending_tempo
+                frames_per_tick = sample_rate * 5.0 / (2.0 * tempo)
+                pending_tempo = None
             tick += 1
             if tick >= ticks_per_row:
                 advance_row()

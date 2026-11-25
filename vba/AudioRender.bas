@@ -27,14 +27,17 @@ Option Explicit
 Private Const SND_ASYNC As Long = &H1
 Private Const SND_NODEFAULT As Long = &H2
 Private Const AMIGA_CLOCK As Double = 7093789.2
-' MOD/XM oscillator waveforms are 64 points long and 4xx/6xx speed advances
-' that phase one point per tick. The sine table is sampled from a sine wave.
-Private Const WAVE_PHASE_STEPS As Long = 64
+' ProTracker 2.3D keeps an 8-bit phase counter, advances it by 4 * 4xx speed,
+' and indexes a 32-step table with (phase \ 4) And 31. The table is unsigned;
+' phases 128..255 make the oscillator negative. Waveforms 2 and 3 are square.
+Private Const WAVE_PHASE_STEPS As Long = 256
+Private Const WAVE_TABLE_STEPS As Long = 32
 Private Const RAMP_TICKS As Double = 0.25
 
 ' Sequencer state. Kept at module level so ProcessRow and AdvanceRow can share
 ' it with the sample loop.
 Private mTempo As Double
+Private mPendingTempo As Double
 Private mTicksPerRow As Long
 Private mRate As Long
 Private mFramesPerTick As Double
@@ -49,8 +52,7 @@ Private mPendingBreak As Long
 Private mDelayRows As Long
 Private mCachedPattern As Long
 Private mNotes() As TNote
-Private mWave(0 To WAVE_PHASE_STEPS - 1) As Long
-Private mRandom(0 To WAVE_PHASE_STEPS - 1) As Long
+Private mWave(0 To WAVE_TABLE_STEPS - 1) As Long
 Private mSampleCache(1 To 31) As Variant
 Private mSampleLoaded(1 To 31) As Boolean
 
@@ -77,12 +79,12 @@ Private vVibSpeed(0 To CHANNEL_COUNT - 1) As Long
 Private vVibDepth(0 To CHANNEL_COUNT - 1) As Long
 Private vVibActive(0 To CHANNEL_COUNT - 1) As Boolean
 Private vVibPos(0 To CHANNEL_COUNT - 1) As Long
-Private vVibWave(0 To CHANNEL_COUNT - 1) As Long
+Private vVibWave(0 To CHANNEL_COUNT - 1) As Long ' E4x low nibble: waveform + hold bit
 Private vTremSpeed(0 To CHANNEL_COUNT - 1) As Long
 Private vTremDepth(0 To CHANNEL_COUNT - 1) As Long
 Private vTremActive(0 To CHANNEL_COUNT - 1) As Boolean
 Private vTremPos(0 To CHANNEL_COUNT - 1) As Long
-Private vTremWave(0 To CHANNEL_COUNT - 1) As Long
+Private vTremWave(0 To CHANNEL_COUNT - 1) As Long ' E7x high-nibble value: waveform + hold bit
 Private vCutTick(0 To CHANNEL_COUNT - 1) As Long
 Private vRamp(0 To CHANNEL_COUNT - 1) As Long
 
@@ -108,6 +110,7 @@ Public Function RenderSongToWav() As String
     On Error GoTo Fail
 
     mTempo = GetDoubleSetting("TempoBPM")
+    mPendingTempo = -1#
     mTicksPerRow = CLng(GetDoubleSetting("SpeedTicks"))
     mRate = GetLongSetting("SampleRateHz")
     mOrders = GetLongSetting("RenderOrders")
@@ -175,6 +178,11 @@ Public Function RenderSongToWav() As String
         tickPhase = tickPhase + 1#
         Do While tickPhase >= mFramesPerTick And mOrderPos < mOrders
             tickPhase = tickPhase - mFramesPerTick
+            If mPendingTempo > 0# Then
+                mTempo = mPendingTempo
+                mFramesPerTick = mRate * 5# / (mTempo * 2#)
+                mPendingTempo = -1#
+            End If
             mTick = mTick + 1
             If mTick >= mTicksPerRow Then AdvanceRow
         Loop
@@ -198,29 +206,15 @@ End Function
 ' ---------------------------------------------------------------------------
 
 Private Sub InitMixer()
-    ' Standard 64-point MOD/XM oscillator sine table, sampled from a sine wave.
-    Dim i As Long
-    For i = 0 To WAVE_PHASE_STEPS - 1
-        mWave(i) = CLng(Round(127# * Sin(2# * 3.14159265358979 * CDbl(i) / CDbl(WAVE_PHASE_STEPS))))
-    Next i
-
-    ' Deterministic random waveform used by MOD E4x/E7x type 3.
-    mRandom(0) = 98: mRandom(1) = -127: mRandom(2) = -43: mRandom(3) = 88
-    mRandom(4) = 102: mRandom(5) = 41: mRandom(6) = -65: mRandom(7) = -94
-    mRandom(8) = 125: mRandom(9) = 20: mRandom(10) = -71: mRandom(11) = -86
-    mRandom(12) = -70: mRandom(13) = -32: mRandom(14) = -16: mRandom(15) = -96
-    mRandom(16) = 17: mRandom(17) = 72: mRandom(18) = 107: mRandom(19) = -5
-    mRandom(20) = 116: mRandom(21) = -69: mRandom(22) = -62: mRandom(23) = -40
-    mRandom(24) = 10: mRandom(25) = -61: mRandom(26) = 65: mRandom(27) = 109
-    mRandom(28) = -18: mRandom(29) = -38: mRandom(30) = -13: mRandom(31) = -76
-    mRandom(32) = -23: mRandom(33) = 88: mRandom(34) = 21: mRandom(35) = -94
-    mRandom(36) = 8: mRandom(37) = 106: mRandom(38) = 21: mRandom(39) = -112
-    mRandom(40) = 6: mRandom(41) = 109: mRandom(42) = 20: mRandom(43) = -88
-    mRandom(44) = -30: mRandom(45) = 9: mRandom(46) = -127: mRandom(47) = 118
-    mRandom(48) = 42: mRandom(49) = -34: mRandom(50) = 89: mRandom(51) = -4
-    mRandom(52) = -51: mRandom(53) = -72: mRandom(54) = 21: mRandom(55) = -29
-    mRandom(56) = 112: mRandom(57) = 123: mRandom(58) = 84: mRandom(59) = -101
-    mRandom(60) = -92: mRandom(61) = 98: mRandom(62) = -54: mRandom(63) = -95
+    ' ProTracker 2.3D's 32-step oscillator table (see THIRD_PARTY_NOTICES.md).
+    mWave(0) = 0: mWave(1) = 24: mWave(2) = 49: mWave(3) = 74
+    mWave(4) = 97: mWave(5) = 120: mWave(6) = 141: mWave(7) = 161
+    mWave(8) = 180: mWave(9) = 197: mWave(10) = 212: mWave(11) = 224
+    mWave(12) = 235: mWave(13) = 244: mWave(14) = 250: mWave(15) = 253
+    mWave(16) = 255: mWave(17) = 253: mWave(18) = 250: mWave(19) = 244
+    mWave(20) = 235: mWave(21) = 224: mWave(22) = 212: mWave(23) = 197
+    mWave(24) = 180: mWave(25) = 161: mWave(26) = 141: mWave(27) = 120
+    mWave(28) = 97: mWave(29) = 74: mWave(30) = 49: mWave(31) = 24
 
     Dim ch As Long
     For ch = 0 To CHANNEL_COUNT - 1
@@ -325,8 +319,10 @@ Private Sub ProcessRow()
                         vPeriod(ch) = CDbl(cell.Period)
                         vTarget(ch) = vPeriod(ch)
                     End If
-                    vVibPos(ch) = 0
-                    vTremPos(ch) = 0
+                    ' PT2 only resets an oscillator phase when its waveform
+                    ' control does not have the "keep phase" bit set.
+                    If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
+                    If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
                     vCutTick(ch) = -1
                     vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
                 End If
@@ -351,8 +347,8 @@ Private Sub ProcessRow()
                 vPeriod(ch) = CDbl(cell.Period)
                 vTarget(ch) = vPeriod(ch)
             End If
-            vVibPos(ch) = 0
-            vTremPos(ch) = 0
+            If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
+            If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
         End If
 
         If e = 0 Then
@@ -412,14 +408,21 @@ Private Sub ProcessRow()
             mPendingJump = p
             If mPendingJump > UBound(mOrderList) Then mPendingJump = UBound(mOrderList)
         ElseIf e = 13 And mPendingJump < 0 Then
-            mPendingBreak = p
-            If mPendingBreak >= PATTERN_ROWS Then mPendingBreak = PATTERN_ROWS - 1
+            ' ProTracker interprets Dxx as BCD and maps values above the last
+            ' row back to row 0, rather than clamping to row 63.
+            Dim bcdBreak As Long
+            bcdBreak = (hi * 10) + lo
+            If bcdBreak < PATTERN_ROWS Then
+                mPendingBreak = bcdBreak
+            Else
+                mPendingBreak = 0
+            End If
         ElseIf e = 15 And p > 0 Then
             If p <= &H1F Then
                 mTicksPerRow = p
             Else
-                mTempo = CDbl(p)
-                mFramesPerTick = mRate * 5# / (mTempo * 2#)
+                ' PT's CIA tempo change is delayed until the next tick.
+                mPendingTempo = CDbl(p)
             End If
         End If
 
@@ -432,19 +435,18 @@ Private Sub ProcessRow()
             Dim newVol As Double
             Select Case hi
                 Case &H1  ' E1x - fine portamento up
-                    vPeriod(ch) = MaxDbl(1#, vPeriod(ch) - lo)
+                    vPeriod(ch) = MaxDbl(113#, vPeriod(ch) - lo)
                 Case &H2  ' E2x - fine portamento down
-                    vPeriod(ch) = vPeriod(ch) + lo
-                Case &H4  ' E4x - vibrato waveform
-                    vVibWave(ch) = lo And &H3
+                    vPeriod(ch) = MinDbl(856#, vPeriod(ch) + lo)
+                Case &H4  ' E4x - vibrato waveform/phase control
+                    vVibWave(ch) = lo
                 Case &H5  ' E5x - set finetune
                     vFine(ch) = lo And &HF
-                Case &H7  ' E7x - tremolo waveform
-                    vTremWave(ch) = lo And &H3
+                Case &H7  ' E7x - tremolo waveform/phase control
+                    vTremWave(ch) = lo
                 Case &H9  ' E9x - retrigger sample
+                    ' PT2's doRetrg restarts the sample without resetting LFOs.
                     vPos(ch) = 0#
-                    vVibPos(ch) = 0
-                    vTremPos(ch) = 0
                 Case &HA  ' EAx - fine volume slide up
                     vVol(ch) = CSng(Clamp01(CDbl(vVol(ch)) + 1# / 64#))
                 Case &HB  ' EBx - fine volume slide down
@@ -520,14 +522,13 @@ Private Function MixFrame(ByVal tick As Long) As Double
             End If
             If arpDelta <> 0 Then period = period / (2# ^ (CDbl(arpDelta) / 12#))
 
-            ' Protracker-compatible playback skips vibrato on the first tick.
-            ' Afterwards it is a linear period slide of depth / 64, truncated
-            ' toward zero. The stored phase is already advanced for this tick,
-            ' so read the previous phase: OpenMPT reads, then advances.
+            ' PT2 skips vibrato on tick 0. Its unsigned table delta is scaled
+            ' by depth / 128 and signed by the phase's high bit. The stored
+            ' phase is one advance ahead, so read the previous phase.
             If vVibActive(ch) And vVibDepth(ch) <> 0 And tick > 0 Then
-                vibPhase = (vVibPos(ch) - vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
+                vibPhase = (vVibPos(ch) - 4 * vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
                 If vibPhase < 0 Then vibPhase = vibPhase + WAVE_PHASE_STEPS
-                vibOffset = Fix(CDbl(WaveValue(vibPhase, vVibWave(ch))) * CDbl(vVibDepth(ch)) / 64#)
+                vibOffset = Fix(CDbl(WaveValue(vibPhase, vVibWave(ch))) * CDbl(vVibDepth(ch)) / 128#)
                 period = period + vibOffset
                 If period < 1# Then period = 1#
             End If
@@ -553,9 +554,9 @@ Private Function MixFrame(ByVal tick As Long) As Double
             End If
 
             If vTremActive(ch) And vTremDepth(ch) <> 0 And tick > 0 Then
-                tremPhase = (vTremPos(ch) - vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
+                tremPhase = (vTremPos(ch) - 4 * vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
                 If tremPhase < 0 Then tremPhase = tremPhase + WAVE_PHASE_STEPS
-                trem = CDbl(WaveValue(tremPhase, vTremWave(ch))) * CDbl(vTremDepth(ch)) / (32# * 64#)
+                trem = CDbl(WaveValue(tremPhase, vTremWave(ch), vVibPos(ch))) * CDbl(vTremDepth(ch)) / (64# * 64#)
                 level = Clamp01(level + trem)
             End If
 
@@ -583,8 +584,9 @@ Private Sub ApplyTickEffects(ByVal ch As Long)
         vVol(ch) = CSng(Clamp01(newVol))
     End If
 
-    If vPortUp(ch) <> 0 Then vPeriod(ch) = MaxDbl(1#, vPeriod(ch) - CDbl(vPortUp(ch)))
-    If vPortDown(ch) <> 0 Then vPeriod(ch) = vPeriod(ch) + CDbl(vPortDown(ch))
+    ' PT2 clamps 1xx/2xx to the lowest/highest period in its table.
+    If vPortUp(ch) <> 0 Then vPeriod(ch) = MaxDbl(113#, vPeriod(ch) - CDbl(vPortUp(ch)))
+    If vPortDown(ch) <> 0 Then vPeriod(ch) = MinDbl(856#, vPeriod(ch) + CDbl(vPortDown(ch)))
 
     If vPortSpeed(ch) <> 0 And vTarget(ch) <> 0# Then
         If vPeriod(ch) < vTarget(ch) Then
@@ -596,31 +598,43 @@ Private Sub ApplyTickEffects(ByVal ch As Long)
 
     ' The row command controls whether the oscillator is active. Effect memory
     ' keeps speed/depth, but an inactive LFO must not advance its phase.
-    If vVibActive(ch) Then vVibPos(ch) = (vVibPos(ch) + vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
-    If vTremActive(ch) Then vTremPos(ch) = (vTremPos(ch) + vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
+    If vVibActive(ch) Then vVibPos(ch) = (vVibPos(ch) + 4 * vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
+    If vTremActive(ch) Then vTremPos(ch) = (vTremPos(ch) + 4 * vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
 End Sub
 
-Private Function WaveValue(ByVal position As Long, ByVal waveform As Long) As Long
-    Dim phase As Long
+Private Function WaveValue(ByVal position As Long, ByVal waveform As Long, Optional ByVal signPosition As Long = -1) As Long
+    Dim phase As Long, index As Long, signPhase As Long, magnitude As Long
     phase = position Mod WAVE_PHASE_STEPS
     If phase < 0 Then phase = phase + WAVE_PHASE_STEPS
-    If waveform = 1 Then
-        ' MOD/XM invert the ramp-down waveform relative to other formats.
-        If phase < 32 Then
-            WaveValue = phase * 4
-        Else
-            WaveValue = phase * 4 - 255
-        End If
-    ElseIf waveform = 2 Then
-        If phase < 32 Then
-            WaveValue = 127
-        Else
-            WaveValue = -127
-        End If
-    ElseIf waveform = 3 Then
-        WaveValue = mRandom(phase)
+    index = (phase \ 4) And (WAVE_TABLE_STEPS - 1)
+
+    ' PT2's tremolo ramp takes its magnitude from the tremolo phase but uses
+    ' the vibrato phase to choose which half of the ramp to read.
+    signPhase = signPosition
+    If signPhase < 0 Then
+        signPhase = phase
     Else
-        WaveValue = mWave(phase)
+        signPhase = signPhase Mod WAVE_PHASE_STEPS
+        If signPhase < 0 Then signPhase = signPhase + WAVE_PHASE_STEPS
+    End If
+
+    waveform = waveform And &H3
+    If waveform = 1 Then
+        If signPhase >= 128 Then
+            magnitude = 255 - (index * 8)
+        Else
+            magnitude = index * 8
+        End If
+    ElseIf waveform >= 2 Then
+        magnitude = 255
+    Else
+        magnitude = mWave(index)
+    End If
+
+    If phase >= 128 Then
+        WaveValue = -magnitude
+    Else
+        WaveValue = magnitude
     End If
 End Function
 

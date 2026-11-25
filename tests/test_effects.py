@@ -97,6 +97,23 @@ class EffectTests(unittest.TestCase):
 
         self.assertAlmostEqual(slow_frames / fast_frames, 2.0, delta=0.05)
 
+    def test_fxx_tempo_change_is_delayed_by_one_tick(self) -> None:
+        # PT writes the CIA timer from F40 during tick 0, but the new tick
+        # length starts only on tick 1. The first row therefore keeps the old
+        # 160-frame tick before switching to 312.5-frame ticks.
+        rows = empty_rows(2)
+        rows[0][0] = Cell(effect=0x0F, param=0x40)
+        rows[1][0] = NOTE
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_song(rows, sample_rate=8000), Path(temp_dir) / "delayed-tempo.wav"
+            )
+
+        first_sound = next(i for i, value in enumerate(frames) if abs(value) > 1e-6)
+        self.assertGreater(first_sound, 1600)
+        self.assertLess(first_sound, 1800)
+
     def test_tone_portamento_moves_period_gradually(self) -> None:
         voice = Voice(active=True, period=400.0, target_period=300.0, port_speed=8)
         advance_voice_tick(voice)
@@ -117,18 +134,20 @@ class EffectTests(unittest.TestCase):
             vib_active=True,
         )
         advance_voice_tick(voice)
-        self.assertEqual(voice.vib_pos, 4)
-        # MOD/XM oscillator waveforms are 64 points long, so speed 4 repeats
-        # after 16 tick advances rather than the old 8.
+        # PT2 advances its 8-bit phase by 4 * speed, so speed 4 moves 16 and
+        # wraps after 16 tick advances.
+        self.assertEqual(voice.vib_pos, 16)
         for _ in range(15):
             advance_voice_tick(voice)
         self.assertEqual(voice.vib_pos, 0)
         self.assertEqual(wave_value(0), 0)
-        self.assertEqual(wave_value(16), 127)
-        self.assertEqual(wave_value(32), 0)
-        self.assertEqual(wave_value(48), -127)
-        self.assertEqual(wave_value(0, 2), 127)
-        self.assertEqual(wave_value(32, 2), -127)
+        self.assertEqual(wave_value(64), 255)
+        self.assertEqual(wave_value(128), 0)
+        self.assertEqual(wave_value(192), -255)
+        self.assertEqual(wave_value(0, 2), 255)
+        self.assertEqual(wave_value(128, 2), -255)
+        self.assertEqual(wave_value(0, 3), 255)
+        self.assertEqual(wave_value(128, 3), -255)
 
     def test_vibrato_uses_phase_before_current_tick_advance(self) -> None:
         voice = Voice(
@@ -138,18 +157,34 @@ class EffectTests(unittest.TestCase):
             vib_depth=6,
             vib_active=True,
         )
-        voice.vib_pos = 4  # stored phase after this tick's advance
+        voice.vib_pos = 16  # stored phase after this tick's advance
         self.assertEqual(effective_period(voice, 0), 428.0)
-        # Phase 0 is the sine table's zero crossing, not phase 4.
+        # The previous phase was the sine table's zero crossing.
         self.assertEqual(effective_period(voice, 1), 428.0)
 
-        voice.vib_pos = 16 + voice.vib_speed  # sine peak was at phase 16
-        self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
+        voice.vib_pos = 64 + 16  # sine peak was at phase 64
+        self.assertEqual(effective_period(voice, 1), 428.0 + (255 * 6) // 128)
+
+    def test_vibrato_uses_high_phase_half_to_subtract_period(self) -> None:
+        voice = Voice(
+            active=True,
+            period=428.0,
+            vib_speed=4,
+            vib_depth=6,
+            vib_active=True,
+            vib_pos=192 + 16,  # previous phase 192 is the negative sine peak
+        )
+        self.assertEqual(effective_period(voice, 1), 428.0 - (255 * 6) // 128)
+
+    def test_tremolo_ramp_uses_vibrato_phase_for_magnitude(self) -> None:
+        # PT2 reads the ramp magnitude from the tremolo phase but chooses the
+        # rising/falling half with the vibrato phase.
+        self.assertEqual(wave_value(192, 1, sign_position=0), -128)
+        self.assertEqual(wave_value(192, 1, sign_position=192), -127)
 
     def test_vibrato_stops_on_rows_without_a_command(self) -> None:
-        # OpenMPT clears the vibrato flag at every row boundary. Speed/depth
-        # remain in memory, but the LFO neither modulates nor advances until a
-        # 4xx/6xx command turns it back on.
+        # Without 4xx/6xx in the current row, PT2 dispatches no effect on the
+        # later ticks. Speed/depth stay in memory but the phase must not move.
         voice = Voice(
             active=True,
             period=428.0,
@@ -157,12 +192,12 @@ class EffectTests(unittest.TestCase):
             vib_depth=6,
             vib_active=True,
         )
-        voice.vib_pos = 20  # sine peak was at phase 16
-        self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
+        voice.vib_pos = 64 + 16
+        self.assertEqual(effective_period(voice, 1), 428.0 + (255 * 6) // 128)
 
         voice.vib_active = False
         advance_voice_tick(voice)
-        self.assertEqual(voice.vib_pos, 20)
+        self.assertEqual(voice.vib_pos, 80)
         self.assertEqual(effective_period(voice, 1), 428.0)
 
     def test_6xx_keeps_vibrato_memory_and_only_slides_volume(self) -> None:
@@ -260,6 +295,22 @@ class EffectTests(unittest.TestCase):
             plain_frames, _ = render_frames(make_song(plain), Path(temp_dir) / "plain.wav")
 
         self.assertLess(break_frames, plain_frames // 4)
+
+    def test_pattern_break_uses_bcd_and_wraps_out_of_range(self) -> None:
+        # PT2 reads D99 as BCD 99, then maps any value past row 63 to row 0,
+        # so it must render exactly like D00 rather than breaking at row 63.
+        bcd_rows = empty_rows(2)
+        bcd_rows[0][0] = NOTE
+        bcd_rows[1][0] = Cell(effect=0x0D, param=0x99)
+        zero_rows = empty_rows(2)
+        zero_rows[0][0] = NOTE
+        zero_rows[1][0] = Cell(effect=0x0D, param=0x00)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, bcd = render_frames(make_song(bcd_rows), Path(temp_dir) / "bcd.wav")
+            _, zero = render_frames(make_song(zero_rows), Path(temp_dir) / "zero.wav")
+
+        self.assertEqual(bcd, zero)
 
     def test_zero_sample_header_volume_is_silent_until_cxx(self) -> None:
         rows = empty_rows(2)

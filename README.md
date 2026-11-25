@@ -65,9 +65,15 @@ The renderer is tick-driven and currently supports:
 - Win32 `sndPlaySound` playback from Excel
 - Python-UNO playback from Calc, with `sounddevice`/`pygame` or a system player fallback
 
-`8xx` panning, `E0x` filter, `E3x` glissando, `E6x` pattern loop, `E8x` panning,
-`EDx` note delay, and `EFx` invert loop are parsed but not rendered. Because the
-output is mono, panning does not affect the rendered WAV.
+`8xx` panning, `E0x` filter, `E3x` glissando, `E6x` pattern loop, `E8x`/`EFx`
+sample manipulation, and `EDx` note delay are parsed but not rendered. Because
+the output is mono, panning does not affect the rendered WAV.
+
+Effect timing follows ProTracker 2.3D where practical, using
+[8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone) as the reference:
+the 32-entry oscillator table with an 8-bit phase, BCD `Dxx` rows, the one-tick
+delay on CIA `Fxx` tempo changes, and the `E4x`/`E7x` phase-hold bits. The
+borrowed table is credited in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Using it
 
