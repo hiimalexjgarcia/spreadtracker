@@ -175,6 +175,14 @@ class Voice:
     pending_loop_start: int = 0
     pending_loop_end: int = 0
     pending_fine_tune: int = 0
+    # PT2's setDMA rewrites AUDxLST/AUDxLCH from the channel's *new* note at
+    # tick 0 even when EDx holds the DMA retrigger back. Track that pointer
+    # separately so the old current block can switch to the delayed sample at
+    # its loop point.
+    next_data: bytes | None = None
+    next_looping: bool = False
+    next_loop_start: int = 0
+    next_loop_end: int = 0
     ramp_frames: int = 0
 
 
@@ -202,6 +210,24 @@ def advance_voice_tick(voice: Voice) -> None:
         voice.vib_pos = (voice.vib_pos + 4 * voice.vib_speed) % WAVE_PHASE_STEPS
     if voice.trem_active:
         voice.trem_pos = (voice.trem_pos + 4 * voice.trem_speed) % WAVE_PHASE_STEPS
+
+
+def apply_loop_pointer(voice: Voice) -> None:
+    """Apply PT2's tick-0 AUDxLST/AUDxLCH write when the current block ends."""
+    if not voice.active or voice.next_data is None or voice.next_data is voice.data:
+        return
+
+    boundary = voice.loop_end if voice.looping else len(voice.data or b"")
+    if voice.position < boundary:
+        return
+
+    voice.data = voice.next_data
+    voice.length = len(voice.data)
+    voice.looping = voice.next_looping
+    voice.loop_start = voice.next_loop_start
+    voice.loop_end = voice.next_loop_end
+    voice.position = float(voice.loop_start) if voice.looping else 0.0
+    voice.next_data = voice.data
 
 
 def effective_period(voice: Voice, tick: int) -> float:
@@ -335,6 +361,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             voice.delay_tick = None
             voice.pending_data = None
             voice.pending_period = None
+            # setDMA refreshes every channel's loop pointer from its selected
+            # sample at each row boundary, even if this row has no note.
+            voice.next_data = voice.data
+            voice.next_looping = voice.looping
+            voice.next_loop_start = voice.loop_start
+            voice.next_loop_end = voice.loop_end
 
             # OpenMPT clears the vibrato/tremolo flags at every row boundary;
             # only a 4xx/6xx/7xx command on this row turns the oscillator back
@@ -370,20 +402,27 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 if effect == 0x0E and up == 0x05:
                     note_finetune = down & 0x0F
 
-                # EDx with x > 0 changes Paula's internal note data at tick 0,
-                # but the DMA channel keeps playing the old sample at the old
-                # period until tick x.
-                delay_note = note_delay and down > 0 and cell.period > 0
-                if delay_note:
-                    voice.delay_tick = down
-                    voice.pending_data = sample_data
-                    voice.pending_period = pt_period(cell.period, note_finetune)
-                    voice.pending_target = voice.pending_period
-                    voice.pending_looping = looping
-                    voice.pending_loop_start = loop_start
-                    voice.pending_loop_end = loop_end
-                    voice.pending_fine_tune = fine_tune
-                    voice.cut_tick = None
+                # setDMA writes the loop pointer from the selected sample at
+                # tick 0 for EDx, but noteDelay does not restart DMA until x.
+                # The old current block therefore switches to this sample at
+                # its loop point. ED0 has no later tick, so it is loop-pointer
+                # update only and never retriggers the sample.
+                if note_delay:
+                    voice.next_data = sample_data
+                    voice.next_looping = looping
+                    voice.next_loop_start = loop_start
+                    voice.next_loop_end = loop_end
+                    if cell.period > 0:
+                        voice.cut_tick = None
+                        if down > 0:
+                            voice.delay_tick = down
+                            voice.pending_data = sample_data
+                            voice.pending_period = pt_period(cell.period, note_finetune)
+                            voice.pending_target = voice.pending_period
+                            voice.pending_looping = looping
+                            voice.pending_loop_start = loop_start
+                            voice.pending_loop_end = loop_end
+                            voice.pending_fine_tune = fine_tune
                 else:
                     # PT2 loads the sample pointer, loop and finetune from the
                     # cell even when there is no note. An idle channel stays
@@ -395,6 +434,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                     voice.loop_start = loop_start
                     voice.loop_end = loop_end
                     voice.fine_tune = fine_tune
+                    voice.next_data = sample_data
+                    voice.next_looping = looping
+                    voice.next_loop_start = loop_start
+                    voice.next_loop_end = loop_end
 
                     if cell.period > 0:
                         if effect in (0x03, 0x05):
@@ -404,12 +447,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                         else:
                             voice.period = pt_period(cell.period, note_finetune)
                             voice.target_period = voice.period
-                            # EDx skips Pt2's LFO phase reset, including ED0.
-                            if not note_delay:
-                                if not voice.vib_wave & 0x04:
-                                    voice.vib_pos = 0
-                                if not voice.trem_wave & 0x04:
-                                    voice.trem_pos = 0
+                            if not voice.vib_wave & 0x04:
+                                voice.vib_pos = 0
+                            if not voice.trem_wave & 0x04:
+                                voice.trem_pos = 0
                             voice.cut_tick = None
                             voice.active = True
                             voice.position = 0.0
@@ -421,27 +462,29 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 note_finetune = voice.fine_tune
                 if effect == 0x0E and up == 0x05:
                     note_finetune = down & 0x0F
-                delay_note = note_delay and down > 0
-                if delay_note:
-                    voice.delay_tick = down
-                    voice.pending_data = voice.data
-                    voice.pending_period = pt_period(cell.period, note_finetune)
-                    voice.pending_target = voice.pending_period
-                    voice.pending_looping = voice.looping
-                    voice.pending_loop_start = voice.loop_start
-                    voice.pending_loop_end = voice.loop_end
-                    voice.pending_fine_tune = voice.fine_tune
+                if note_delay:
+                    # The loop pointer stays on the already selected sample.
+                    # ED0 only clears the old cut command; it has no tick at
+                    # which doRetrg can restart the voice.
                     voice.cut_tick = None
+                    if down > 0:
+                        voice.delay_tick = down
+                        voice.pending_data = voice.data
+                        voice.pending_period = pt_period(cell.period, note_finetune)
+                        voice.pending_target = voice.pending_period
+                        voice.pending_looping = voice.looping
+                        voice.pending_loop_start = voice.loop_start
+                        voice.pending_loop_end = voice.loop_end
+                        voice.pending_fine_tune = voice.fine_tune
                 elif effect in (0x03, 0x05):
                     voice.target_period = pt_porta_period(cell.period, note_finetune)
                 else:
                     voice.period = pt_period(cell.period, note_finetune)
                     voice.target_period = voice.period
-                    if not note_delay:
-                        if not voice.vib_wave & 0x04:
-                            voice.vib_pos = 0
-                        if not voice.trem_wave & 0x04:
-                            voice.trem_pos = 0
+                    if not voice.vib_wave & 0x04:
+                        voice.vib_pos = 0
+                    if not voice.trem_wave & 0x04:
+                        voice.trem_pos = 0
                     voice.cut_tick = None
                     voice.active = True
                     voice.position = 0.0
@@ -575,6 +618,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                         voice.loop_start = voice.pending_loop_start
                         voice.loop_end = voice.pending_loop_end
                         voice.fine_tune = voice.pending_fine_tune
+                        voice.next_data = voice.data
+                        voice.next_looping = voice.looping
+                        voice.next_loop_start = voice.loop_start
+                        voice.next_loop_end = voice.loop_end
                         voice.period = (
                             voice.pending_period if voice.pending_period is not None else voice.period
                         )
@@ -602,6 +649,10 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
 
             if voice.cut_tick is not None and tick >= voice.cut_tick:
                 voice.volume = 0.0
+
+            # PT2 rewrites the loop pointer at tick 0. If the old current block
+            # ends during a delay, Paula starts looping the delayed sample.
+            apply_loop_pointer(voice)
 
             period = effective_period(voice, tick)
             if period <= 0:

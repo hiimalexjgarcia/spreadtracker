@@ -65,7 +65,9 @@ def empty_rows(count: int = 64) -> list[list[Cell]]:
     return [[Cell() for _ in range(4)] for _ in range(count)]
 
 
-def make_two_sample_song(rows: list[list[Cell]], *, speed: float = 7.0) -> Song:
+def make_two_sample_song(
+    rows: list[list[Cell]], *, speed: float = 7.0, sample_length: int = 64
+) -> Song:
     """Song with a positive and a negative sample for retrigger timing checks."""
     return Song(
         title="sample-switch-test",
@@ -74,22 +76,25 @@ def make_two_sample_song(rows: list[list[Cell]], *, speed: float = 7.0) -> Song:
         instruments={
             1: Instrument(
                 name="positive",
-                length=64,
+                length=sample_length,
                 finetune=0,
                 volume=64,
                 repeat_start=0,
-                repeat_length=64,
+                repeat_length=sample_length,
             ),
             2: Instrument(
                 name="negative",
-                length=64,
+                length=sample_length,
                 finetune=0,
                 volume=64,
                 repeat_start=0,
-                repeat_length=64,
+                repeat_length=sample_length,
             ),
         },
-        sample_data={1: bytes([0x40] * 64), 2: bytes([0x80] * 64)},
+        sample_data={
+            1: bytes([0x40] * sample_length),
+            2: bytes([0x80] * sample_length),
+        },
         settings=RenderSettings(
             tempo=125.0,
             speed=speed,
@@ -422,16 +427,20 @@ class EffectTests(unittest.TestCase):
     def test_ed_note_delay_defers_sample_retrigger(self) -> None:
         # EDx loads the note at tick 0 but PT2 does not restart DMA until tick x.
         # With no earlier sample on the channel the first sound marks that tick.
+        # ED0 has no later tick, so it never starts the new sample.
         delayed = empty_rows(2)
         delayed[0][0] = Cell(period=428, sample=1, effect=0x0E, param=0xD3)
         immediate = empty_rows(2)
-        immediate[0][0] = Cell(period=428, sample=1, effect=0x0E, param=0xD0)
+        immediate[0][0] = Cell(period=428, sample=1)
+        zero_delay = empty_rows(2)
+        zero_delay[0][0] = Cell(period=428, sample=1, effect=0x0E, param=0xD0)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             _, delayed_frames = render_frames(make_song(delayed), Path(temp_dir) / "delayed.wav")
             _, immediate_frames = render_frames(
                 make_song(immediate), Path(temp_dir) / "immediate.wav"
             )
+            _, zero_frames = render_frames(make_song(zero_delay), Path(temp_dir) / "ed0.wav")
 
         frames_per_tick = 8000 * 5 / (2 * 125)
         delayed_start = next(
@@ -443,6 +452,7 @@ class EffectTests(unittest.TestCase):
         self.assertLess(immediate_start, frames_per_tick)
         self.assertGreater(delayed_start, frames_per_tick * 2)
         self.assertLess(delayed_start, frames_per_tick * 4)
+        self.assertTrue(all(abs(value) < 1e-6 for value in zero_frames))
 
     def test_ed_note_delay_does_not_fire_without_a_note(self) -> None:
         rows = empty_rows(2)
@@ -454,16 +464,16 @@ class EffectTests(unittest.TestCase):
         self.assertTrue(all(abs(value) < 1e-6 for value in frames))
 
     def test_ed_note_delay_keeps_old_sample_until_tick_x_at_speed_7(self) -> None:
-        # Pattern 33 of gslinger.mod uses ED1/ED3/ED4 at speed 7. PT2 loads
-        # the new note internally at tick 0, but Paula keeps playing the old
-        # sample until the delayed retrigger.
+        # Pattern 33 of gslinger.mod uses ED1/ED3/ED4 at speed 7. With samples
+        # long enough not to loop before tick x, Paula keeps playing the old
+        # current block until the delayed retrigger.
         rows = empty_rows(2)
         rows[0][0] = Cell(period=428, sample=1)
         rows[1][0] = Cell(period=320, sample=2, effect=0x0E, param=0xD3)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             _, frames = render_frames(
-                make_two_sample_song(rows), Path(temp_dir) / "delay.wav"
+                make_two_sample_song(rows, sample_length=2048), Path(temp_dir) / "delay.wav"
             )
 
         frames_per_tick = 8000 * 5 / (2 * 125)
@@ -479,6 +489,33 @@ class EffectTests(unittest.TestCase):
         ]
         self.assertTrue(all(value > 0.01 for value in tick_means[:3]))
         self.assertTrue(all(value < -0.01 for value in tick_means[3:]))
+
+    def test_ed_note_delay_swaps_loop_pointer_at_tick_zero(self) -> None:
+        # PT2's setDMA still writes the delayed sample's loop pointer at tick 0.
+        # Once the old current block reaches its loop point, Paula starts
+        # playing the delayed sample even before the EDx retrigger tick.
+        rows = empty_rows(2)
+        rows[0][0] = Cell(period=428, sample=1)
+        rows[1][0] = Cell(period=320, sample=2, effect=0x0E, param=0xD6)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_two_sample_song(rows), Path(temp_dir) / "loop-pointer.wav"
+            )
+
+        frames_per_tick = 8000 * 5 / (2 * 125)
+        row_start = int(7 * frames_per_tick)
+        tick_means = [
+            sum(
+                frames[
+                    row_start + i * int(frames_per_tick) : row_start + (i + 1) * int(frames_per_tick)
+                ]
+            )
+            / int(frames_per_tick)
+            for i in range(7)
+        ]
+        self.assertLess(tick_means[0], -0.05)
+        self.assertLess(tick_means[1], -0.2)
 
     def test_ee_pattern_delay_extends_row(self) -> None:
         rows = empty_rows(2)
