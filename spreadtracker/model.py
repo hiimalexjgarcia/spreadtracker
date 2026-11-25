@@ -169,12 +169,24 @@ def parse_mod(path: Path | str) -> Module:
 
     total_sample_bytes = sum(header[1] for header in sample_headers)
     pattern_bytes = len(raw) - 1084 - total_sample_bytes
-    if pattern_bytes < 0 or pattern_bytes % 1024 != 0:
+    # Some MOD writers append a few padding bytes after the last sample. Use
+    # the highest referenced pattern as a lower bound so trailing bytes do not
+    # make an otherwise valid module unparsable.
+    required_patterns = max(1, max(order[:song_length], default=0) + 1)
+    if pattern_bytes < required_patterns * 1024:
         raise ValueError(
             f"Cannot infer pattern count: {pattern_bytes} pattern bytes "
-            f"(remainder {pattern_bytes % 1024})"
+            f"cannot hold {required_patterns} referenced patterns"
         )
     pattern_count = pattern_bytes // 1024
+    if pattern_count < required_patterns:
+        pattern_count = required_patterns
+    trailing_bytes = pattern_bytes - pattern_count * 1024
+    if trailing_bytes >= 1024:
+        raise ValueError(
+            f"Cannot infer pattern count: {pattern_bytes} pattern bytes "
+            f"leaves {trailing_bytes} trailing bytes"
+        )
 
     sample_offset = 1084 + pattern_count * 1024
     samples: list[Sample] = []
