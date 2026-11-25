@@ -20,6 +20,7 @@ WAV, and play it.
 - [tests/fixtures/space_debris.mod](tests/fixtures/space_debris.mod) — sample 4-channel Protracker module
 - [tests/fixtures/elysium.mod](tests/fixtures/elysium.mod) — trailing-padding and final-order `Bxx` fixture
 - [tests/fixtures/musiklinjen.mod](tests/fixtures/musiklinjen.mod) — sample-only-cell and volume-slide fixture
+- [tests/fixtures/gslinger.mod](tests/fixtures/gslinger.mod) — finetune, note-selection, and dense-effect fixture
 - [tests/test_calc_render.py](tests/test_calc_render.py) — headless Calc-path verification
 - [tests/test_effects.py](tests/test_effects.py) — synthetic checks for tick-driven effects
 - [tests/test_model.py](tests/test_model.py) — MOD parser edge cases
@@ -71,9 +72,10 @@ the output is mono, panning does not affect the rendered WAV.
 
 Effect timing follows ProTracker 2.3D where practical, using
 [8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone) as the reference:
-the 32-entry oscillator table with an 8-bit phase, BCD `Dxx` rows, the one-tick
-delay on CIA `Fxx` tempo changes, and the `E4x`/`E7x` phase-hold bits. The
-borrowed table is credited in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+the 32-entry oscillator table with an 8-bit phase, finetuned period tables, BCD
+`Dxx` rows, the one-tick delay on CIA `Fxx` tempo changes, and the `E4x`/`E7x`
+phase-hold bits. The borrowed tables are credited in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Using it
 
@@ -167,7 +169,7 @@ the Calc path uses the shared Python renderer.
 
 - Render the remaining `E` subcommands (`E0x`, `E3x`, `E6x`, `EDx`, `EFx`).
 - Add per-channel volume/tempo automation and stereo panning.
-- Reduce the remaining fidelity gap to OpenMPT (filtering and mixer edge cases).
+- Reduce the remaining fidelity gap to OpenMPT (finetune precision, filtering, and mixer edge cases).
 - Add an in-workbook editor mode: edit a selected pattern, then re-render.
 - Add a native `.ods` workbook generator for Calc.
 - Optional: write `.mod`/`.xm`/`.it` files from worksheet data.

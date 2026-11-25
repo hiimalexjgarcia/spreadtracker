@@ -1,7 +1,8 @@
 # Third-party notices
 
-Spreadtracker's ProTracker 2.3D oscillator table is derived from
-[8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone), `src/pt2_tables.c`.
+Spreadtracker's ProTracker 2.3D oscillator and finetuned period tables are
+derived from [8bitbubsy/pt2-clone](https://github.com/8bitbubsy/pt2-clone),
+`src/pt2_tables.c`.
 
 That project is distributed under the BSD 3-Clause License:
 

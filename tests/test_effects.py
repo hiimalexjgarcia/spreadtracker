@@ -13,6 +13,8 @@ from spreadtracker.render import (
     Voice,
     advance_voice_tick,
     effective_period,
+    pt_period,
+    pt_porta_period,
     render_song,
     wave_value,
 )
@@ -475,6 +477,86 @@ class EffectTests(unittest.TestCase):
         rms_with = sum(value * value for value in with_row) / len(with_row)
         rms_without = sum(value * value for value in without_row) / len(without_row)
         self.assertGreater(rms_with, rms_without * 3)
+
+    def test_pt_period_uses_base_table_index_for_negative_finetune(self) -> None:
+        # PT2 finds the note's index in the finetune-0 row, then reads the same
+        # index from the finetuned row. Searching the finetuned row directly
+        # would pick 214 for period 214 at finetune 8 instead of 226.
+        self.assertEqual(pt_period(214, 0), 214.0)
+        self.assertEqual(pt_period(214, 8), 226.0)
+        # Tone portamento instead searches the finetuned row, then applies PT2's
+        # one-step correction for negative finetunes.
+        self.assertEqual(pt_porta_period(214, 8), 226.0)
+
+    def test_sample_only_cell_selects_sample_for_later_note(self) -> None:
+        # A sample number without a note must load the sample metadata but stay
+        # idle. The next note has no sample number and should use that sample.
+        selected = empty_rows(2)
+        selected[0][0] = Cell(sample=2)
+        selected[1][0] = Cell(period=428)
+        unselected = empty_rows(2)
+        unselected[1][0] = Cell(period=428)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            selected_song = make_song(selected)
+            selected_song.instruments[2] = Instrument(
+                name="second",
+                length=len(SAMPLE_DATA),
+                finetune=0,
+                volume=64,
+                repeat_start=0,
+                repeat_length=len(SAMPLE_DATA),
+            )
+            selected_song.sample_data[2] = SAMPLE_DATA
+            _, with_selection = render_frames(
+                selected_song, Path(temp_dir) / "selected.wav"
+            )
+            _, without_selection = render_frames(
+                make_song(unselected), Path(temp_dir) / "unselected.wav"
+            )
+
+        row_frames = int(8000 * 5.0 / (2.0 * 125.0) * 6.0)
+        self.assertAlmostEqual(max(abs(value) for value in with_selection[:row_frames]), 0.0)
+        self.assertGreater(
+            max(abs(value) for value in with_selection[row_frames : 2 * row_frames]), 0.1
+        )
+        self.assertAlmostEqual(max(abs(value) for value in without_selection), 0.0)
+
+    def test_note_without_sample_number_retriggers_selected_sample(self) -> None:
+        implicit = empty_rows(2)
+        implicit[0][0] = NOTE
+        implicit[1][0] = Cell(period=404)
+        explicit = empty_rows(2)
+        explicit[0][0] = NOTE
+        explicit[1][0] = Cell(period=404, sample=1)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, implicit_frames = render_frames(
+                make_song(implicit), Path(temp_dir) / "implicit.wav"
+            )
+            _, explicit_frames = render_frames(
+                make_song(explicit), Path(temp_dir) / "explicit.wav"
+            )
+
+        self.assertEqual(implicit_frames, explicit_frames)
+
+    def test_tone_portamento_without_sample_number_does_not_retrigger(self) -> None:
+        implicit = empty_rows(2)
+        implicit[0][0] = NOTE
+        implicit[1][0] = Cell(period=404, effect=0x03, param=0x08)
+        explicit = empty_rows(2)
+        explicit[0][0] = NOTE
+        explicit[1][0] = Cell(period=404, sample=1, effect=0x03, param=0x08)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, implicit_frames = render_frames(
+                make_song(implicit), Path(temp_dir) / "implicit.wav"
+            )
+            _, explicit_frames = render_frames(
+                make_song(explicit), Path(temp_dir) / "explicit.wav"
+            )
+
+        self.assertEqual(implicit_frames, explicit_frames)
 
     def test_7xx_tremolo_modulates_volume(self) -> None:
         rows = empty_rows(2)

@@ -28,6 +28,28 @@ WAVE_TABLE: tuple[int, ...] = (
     255, 253, 250, 244, 235, 224, 212, 197, 180, 161, 141, 120, 97, 74, 49, 24,
 )
 
+# PT2 maps each MOD note through a finetuned period table instead of applying a
+# fractional multiplier. The 16 rows are finetunes 0..7 and -8..-1, as stored
+# by pt2-clone (BSD-3-Clause; see THIRD_PARTY_NOTICES.md).
+PERIOD_TABLE: tuple[tuple[int, ...], ...] = (
+    (856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113, 0),
+    (850, 802, 757, 715, 674, 637, 601, 567, 535, 505, 477, 450, 425, 401, 379, 357, 337, 318, 300, 284, 268, 253, 239, 225, 213, 201, 189, 179, 169, 159, 150, 142, 134, 126, 119, 113, 0),
+    (844, 796, 752, 709, 670, 632, 597, 563, 532, 502, 474, 447, 422, 398, 376, 355, 335, 316, 298, 282, 266, 251, 237, 224, 211, 199, 188, 177, 167, 158, 149, 141, 133, 125, 118, 112, 0),
+    (838, 791, 746, 704, 665, 628, 592, 559, 528, 498, 470, 444, 419, 395, 373, 352, 332, 314, 296, 280, 264, 249, 235, 222, 209, 198, 187, 176, 166, 157, 148, 140, 132, 125, 118, 111, 0),
+    (832, 785, 741, 699, 660, 623, 588, 555, 524, 495, 467, 441, 416, 392, 370, 350, 330, 312, 294, 278, 262, 247, 233, 220, 208, 196, 185, 175, 165, 156, 147, 139, 131, 124, 117, 110, 0),
+    (826, 779, 736, 694, 655, 619, 584, 551, 520, 491, 463, 437, 413, 390, 368, 347, 328, 309, 292, 276, 260, 245, 232, 219, 206, 195, 184, 174, 164, 155, 146, 138, 130, 123, 116, 109, 0),
+    (820, 774, 730, 689, 651, 614, 580, 547, 516, 487, 460, 434, 410, 387, 365, 345, 325, 307, 290, 274, 258, 244, 230, 217, 205, 193, 183, 172, 163, 154, 145, 137, 129, 122, 115, 109, 0),
+    (814, 768, 725, 684, 646, 610, 575, 543, 513, 484, 457, 431, 407, 384, 363, 342, 323, 305, 288, 272, 256, 242, 228, 216, 204, 192, 181, 171, 161, 152, 144, 136, 128, 121, 114, 108, 0),
+    (907, 856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 0),
+    (900, 850, 802, 757, 715, 675, 636, 601, 567, 535, 505, 477, 450, 425, 401, 379, 357, 337, 318, 300, 284, 268, 253, 238, 225, 212, 200, 189, 179, 169, 159, 150, 142, 134, 126, 119, 0),
+    (894, 844, 796, 752, 709, 670, 632, 597, 563, 532, 502, 474, 447, 422, 398, 376, 355, 335, 316, 298, 282, 266, 251, 237, 223, 211, 199, 188, 177, 167, 158, 149, 141, 133, 125, 118, 0),
+    (887, 838, 791, 746, 704, 665, 628, 592, 559, 528, 498, 470, 444, 419, 395, 373, 352, 332, 314, 296, 280, 264, 249, 235, 222, 209, 198, 187, 176, 166, 157, 148, 140, 132, 125, 118, 0),
+    (881, 832, 785, 741, 699, 660, 623, 588, 555, 524, 494, 467, 441, 416, 392, 370, 350, 330, 312, 294, 278, 262, 247, 233, 220, 208, 196, 185, 175, 165, 156, 147, 139, 131, 123, 117, 0),
+    (875, 826, 779, 736, 694, 655, 619, 584, 551, 520, 491, 463, 437, 413, 390, 368, 347, 328, 309, 292, 276, 260, 245, 232, 219, 206, 195, 184, 174, 164, 155, 146, 138, 130, 123, 116, 0),
+    (868, 820, 774, 730, 689, 651, 614, 580, 547, 516, 487, 460, 434, 410, 387, 365, 345, 325, 307, 290, 274, 258, 244, 230, 217, 205, 193, 183, 172, 163, 154, 145, 137, 129, 122, 115, 0),
+    (862, 814, 768, 725, 684, 646, 610, 575, 543, 513, 484, 457, 431, 407, 384, 363, 342, 323, 305, 288, 272, 256, 242, 228, 216, 203, 192, 181, 171, 161, 152, 144, 136, 128, 121, 114, 0),
+)
+
 # Mixer options kept as constants so the Python and VBA paths stay in step.
 USE_INTERPOLATION = True
 RAMP_TICKS = 0.25
@@ -56,6 +78,36 @@ def _signed_sample(value: int) -> float:
 
 def _nibbles(param: int) -> tuple[int, int]:
     return (param >> 4) & 0x0F, param & 0x0F
+
+
+def pt_note_index(note: int) -> int:
+    """Find PT2's base-table index for a MOD note period."""
+    note &= 0x0FFF
+    for index, value in enumerate(PERIOD_TABLE[0]):
+        if note >= value:
+            return index
+    return 36
+
+
+def pt_period(note: int, finetune: int = 0) -> float:
+    """Map a MOD note through PT2's finetuned period table."""
+    return float(PERIOD_TABLE[finetune & 0x0F][pt_note_index(note)])
+
+
+def pt_porta_period(note: int, finetune: int = 0) -> float:
+    """Map a tone-portamento target the way PT2's setTonePorta does."""
+    note &= 0x0FFF
+    row = PERIOD_TABLE[finetune & 0x0F]
+    index = 36
+    for candidate, value in enumerate(row):
+        if note >= value:
+            index = candidate
+            break
+    if index >= 37:
+        index = 35
+    if finetune & 8 and index > 0:
+        index -= 1
+    return float(row[index])
 
 
 def wave_value(position: int, waveform: int = 0, sign_position: int | None = None) -> int:
@@ -143,7 +195,7 @@ def advance_voice_tick(voice: Voice) -> None:
 
 
 def effective_period(voice: Voice, tick: int) -> float:
-    """Return the playback period after arpeggio, vibrato and finetune."""
+    """Return the playback period after arpeggio and vibrato."""
     period = voice.period
     if voice.arp_up or voice.arp_down:
         semitones = (0, voice.arp_up, voice.arp_down)[tick % 3]
@@ -158,10 +210,6 @@ def effective_period(voice: Voice, tick: int) -> float:
     if voice.vib_active and voice.vib_depth and tick > 0:
         phase = (voice.vib_pos - 4 * voice.vib_speed) % WAVE_PHASE_STEPS
         period += int(wave_value(phase, voice.vib_wave) * voice.vib_depth / 128)
-
-    if voice.fine_tune:
-        fine = voice.fine_tune if voice.fine_tune < 8 else voice.fine_tune - 16
-        period *= 2.0 ** (-fine / (12.0 * 8.0))
 
     return max(1.0, period)
 
@@ -287,60 +335,65 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                     voice.active = False
                     continue
 
-                has_note = cell.period > 0
-                if not has_note and not voice.active:
-                    # A sample number without a note selects the sample only;
-                    # it does not start a silent channel.
-                    pass
-                else:
-                    previous_period = voice.period
-                    voice.active = True
-                    voice.data = sample_data
-                    voice.length = len(sample_data)
-                    if has_note:
+                # PT2 loads the sample pointer, volume, loop and finetune from
+                # the cell even when there is no note. An idle channel stays
+                # idle, but the selected sample is ready for a later note with
+                # no sample number.
+                voice.data = sample_data
+                voice.length = len(sample_data)
+                # MOD sample-header volume is literal: 0 is silent, 64 full.
+                voice.volume = min(1.0, instrument.volume / 64.0)
+                # MOD repeat length is in bytes. Lengths of 2 bytes or less are
+                # "no loop" in Protracker-compatible players, so honor the
+                # whole sample instead of a silent 2-byte loop.
+                voice.looping = instrument.repeat_length > 2
+                voice.loop_start = instrument.repeat_start
+                voice.loop_end = (
+                    min(instrument.repeat_start + instrument.repeat_length, len(sample_data))
+                    if voice.looping
+                    else len(sample_data)
+                )
+                voice.fine_tune = instrument.finetune & 0x0F
+
+                if cell.period > 0:
+                    note_finetune = voice.fine_tune
+                    if effect == 0x0E and up == 0x05:
+                        note_finetune = down & 0x0F
+                    if effect in (0x03, 0x05):
+                        # Tone portamento sets a target without retriggering
+                        # DMA, resetting LFO phases, or starting an idle voice.
+                        voice.target_period = pt_porta_period(cell.period, note_finetune)
+                    else:
+                        voice.active = True
                         voice.position = 0.0
-                        if effect in (0x03, 0x05) and previous_period > 0:
-                            # Tone portamento starts from the previous note and
-                            # slides toward the new pitch.
-                            voice.period = previous_period
-                            voice.target_period = float(cell.period)
-                        else:
-                            voice.period = float(cell.period)
-                            voice.target_period = voice.period
-                        # PT2 only resets an oscillator phase when its waveform
-                        # control does not have the "keep phase" bit set.
+                        voice.period = pt_period(cell.period, note_finetune)
+                        voice.target_period = voice.period
                         if not voice.vib_wave & 0x04:
                             voice.vib_pos = 0
                         if not voice.trem_wave & 0x04:
                             voice.trem_pos = 0
                         voice.cut_tick = None
                         voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
-                    # A sample number without a note keeps the current period
-                    # and sample position, but still reloads the sample header
-                    # (most importantly the sample volume) like Protracker.
-                    # MOD sample-header volume is literal: 0 is silent, 64 full.
-                    voice.volume = min(1.0, instrument.volume / 64.0)
-                    # MOD repeat length is in bytes. Lengths of 2 bytes or less
-                    # are "no loop" in Protracker-compatible players, so honor
-                    # the whole sample instead of a silent 2-byte loop.
-                    voice.looping = instrument.repeat_length > 2
-                    voice.loop_start = instrument.repeat_start
-                    voice.loop_end = (
-                        min(instrument.repeat_start + instrument.repeat_length, len(sample_data))
-                        if voice.looping
-                        else len(sample_data)
-                    )
-                    voice.fine_tune = instrument.finetune & 0x0F
-            elif cell.period > 0 and cell.sample == 0 and voice.active:
+            elif cell.period > 0 and voice.data is not None:
+                # A note without a sample number still retriggers the selected
+                # sample in PT2, except for tone portamento which only retargets
+                # the slide.
+                note_finetune = voice.fine_tune
+                if effect == 0x0E and up == 0x05:
+                    note_finetune = down & 0x0F
                 if effect in (0x03, 0x05):
-                    voice.target_period = float(cell.period)
+                    voice.target_period = pt_porta_period(cell.period, note_finetune)
                 else:
-                    voice.period = float(cell.period)
+                    voice.active = True
+                    voice.position = 0.0
+                    voice.period = pt_period(cell.period, note_finetune)
                     voice.target_period = voice.period
-                if not voice.vib_wave & 0x04:
-                    voice.vib_pos = 0
-                if not voice.trem_wave & 0x04:
-                    voice.trem_pos = 0
+                    if not voice.vib_wave & 0x04:
+                        voice.vib_pos = 0
+                    if not voice.trem_wave & 0x04:
+                        voice.trem_pos = 0
+                    voice.cut_tick = None
+                    voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
 
             # Row-trigger effects. Zero nibbles mean "hold" for vibrato/tremolo
             # parameters, but clear arpeggio and slides in classic Protracker.

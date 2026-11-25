@@ -257,6 +257,61 @@ Private Sub InitMixer()
     Next i
 End Sub
 
+Private Function PeriodRow(ByVal finetune As Long) As Variant
+    ' PT2 period rows for finetunes 0..7 and -8..-1, from pt2-clone
+    ' (BSD-3-Clause; see THIRD_PARTY_NOTICES.md).
+    Select Case finetune And &HF
+        Case 0: PeriodRow = Array(856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113, 0)
+        Case 1: PeriodRow = Array(850, 802, 757, 715, 674, 637, 601, 567, 535, 505, 477, 450, 425, 401, 379, 357, 337, 318, 300, 284, 268, 253, 239, 225, 213, 201, 189, 179, 169, 159, 150, 142, 134, 126, 119, 113, 0)
+        Case 2: PeriodRow = Array(844, 796, 752, 709, 670, 632, 597, 563, 532, 502, 474, 447, 422, 398, 376, 355, 335, 316, 298, 282, 266, 251, 237, 224, 211, 199, 188, 177, 167, 158, 149, 141, 133, 125, 118, 112, 0)
+        Case 3: PeriodRow = Array(838, 791, 746, 704, 665, 628, 592, 559, 528, 498, 470, 444, 419, 395, 373, 352, 332, 314, 296, 280, 264, 249, 235, 222, 209, 198, 187, 176, 166, 157, 148, 140, 132, 125, 118, 111, 0)
+        Case 4: PeriodRow = Array(832, 785, 741, 699, 660, 623, 588, 555, 524, 495, 467, 441, 416, 392, 370, 350, 330, 312, 294, 278, 262, 247, 233, 220, 208, 196, 185, 175, 165, 156, 147, 139, 131, 124, 117, 110, 0)
+        Case 5: PeriodRow = Array(826, 779, 736, 694, 655, 619, 584, 551, 520, 491, 463, 437, 413, 390, 368, 347, 328, 309, 292, 276, 260, 245, 232, 219, 206, 195, 184, 174, 164, 155, 146, 138, 130, 123, 116, 109, 0)
+        Case 6: PeriodRow = Array(820, 774, 730, 689, 651, 614, 580, 547, 516, 487, 460, 434, 410, 387, 365, 345, 325, 307, 290, 274, 258, 244, 230, 217, 205, 193, 183, 172, 163, 154, 145, 137, 129, 122, 115, 109, 0)
+        Case 7: PeriodRow = Array(814, 768, 725, 684, 646, 610, 575, 543, 513, 484, 457, 431, 407, 384, 363, 342, 323, 305, 288, 272, 256, 242, 228, 216, 204, 192, 181, 171, 161, 152, 144, 136, 128, 121, 114, 108, 0)
+        Case 8: PeriodRow = Array(907, 856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 0)
+        Case 9: PeriodRow = Array(900, 850, 802, 757, 715, 675, 636, 601, 567, 535, 505, 477, 450, 425, 401, 379, 357, 337, 318, 300, 284, 268, 253, 238, 225, 212, 200, 189, 179, 169, 159, 150, 142, 134, 126, 119, 0)
+        Case 10: PeriodRow = Array(894, 844, 796, 752, 709, 670, 632, 597, 563, 532, 502, 474, 447, 422, 398, 376, 355, 335, 316, 298, 282, 266, 251, 237, 223, 211, 199, 188, 177, 167, 158, 149, 141, 133, 125, 118, 0)
+        Case 11: PeriodRow = Array(887, 838, 791, 746, 704, 665, 628, 592, 559, 528, 498, 470, 444, 419, 395, 373, 352, 332, 314, 296, 280, 264, 249, 235, 222, 209, 198, 187, 176, 166, 157, 148, 140, 132, 125, 118, 0)
+        Case 12: PeriodRow = Array(881, 832, 785, 741, 699, 660, 623, 588, 555, 524, 494, 467, 441, 416, 392, 370, 350, 330, 312, 294, 278, 262, 247, 233, 220, 208, 196, 185, 175, 165, 156, 147, 139, 131, 123, 117, 0)
+        Case 13: PeriodRow = Array(875, 826, 779, 736, 694, 655, 619, 584, 551, 520, 491, 463, 437, 413, 390, 368, 347, 328, 309, 292, 276, 260, 245, 232, 219, 206, 195, 184, 174, 164, 155, 146, 138, 130, 123, 116, 0)
+        Case 14: PeriodRow = Array(868, 820, 774, 730, 689, 651, 614, 580, 547, 516, 487, 460, 434, 410, 387, 365, 345, 325, 307, 290, 274, 258, 244, 230, 217, 205, 193, 183, 172, 163, 154, 145, 137, 129, 122, 115, 0)
+        Case 15: PeriodRow = Array(862, 814, 768, 725, 684, 646, 610, 575, 543, 513, 484, 457, 431, 407, 384, 363, 342, 323, 305, 288, 272, 256, 242, 228, 216, 203, 192, 181, 171, 161, 152, 144, 136, 128, 121, 114, 0)
+    End Select
+End Function
+
+Private Function PeriodForNote(ByVal note As Long, ByVal finetune As Long) As Double
+    ' PT2 finds a note's base-table index first, then reads that index from the
+    ' sample's finetuned row. This differs from searching the finetuned row for
+    ' the nearest lower period when the finetune is negative.
+    Dim rawNote As Long
+    Dim noteIndex As Long
+    Dim baseTable As Variant
+    Dim table As Variant
+    baseTable = PeriodRow(0)
+    table = PeriodRow(finetune)
+    rawNote = note And &HFFF
+    For noteIndex = 0 To 36
+        If rawNote >= CLng(baseTable(noteIndex)) Then Exit For
+    Next noteIndex
+    PeriodForNote = CDbl(table(noteIndex))
+End Function
+
+Private Function PortaPeriodForNote(ByVal note As Long, ByVal finetune As Long) As Double
+    ' PT2's setTonePorta searches the finetuned row directly and decrements the
+    ' index once for negative finetunes.
+    Dim rawNote As Long
+    Dim i As Long
+    Dim table As Variant
+    table = PeriodRow(finetune)
+    rawNote = note And &HFFF
+    For i = 0 To 36
+        If rawNote >= CLng(table(i)) Then Exit For
+    Next i
+    If (finetune And &H8) <> 0 And i > 0 Then i = i - 1
+    PortaPeriodForNote = CDbl(table(i))
+End Function
+
 Private Sub ProcessRow()
     If mOrderPos >= mOrders Then Exit Sub
 
@@ -278,7 +333,7 @@ Private Sub ProcessRow()
 
     If mRow >= PATTERN_ROWS Then Exit Sub
 
-    Dim ch As Long, e As Long, p As Long, hi As Long, lo As Long
+    Dim ch As Long, e As Long, p As Long, hi As Long, lo As Long, noteFine As Long
     Dim cell As TNote
     Dim inst As TInstrument
 
@@ -302,53 +357,58 @@ Private Sub ProcessRow()
                 mSampleLoaded(cell.Sample) = True
             End If
 
-            If cell.Period > 0 Or vActive(ch) Then
-                Dim previousPeriod As Double
-                previousPeriod = vPeriod(ch)
-                vActive(ch) = True
-                vData(ch) = mSampleCache(cell.Sample)
-                vLen(ch) = inst.Bytes
-                If cell.Period > 0 Then
+            ' PT2 loads the sample pointer, volume, loop and finetune from the
+            ' cell even when there is no note. An idle channel stays idle, but
+            ' the selected sample is ready for a later note with no sample no.
+            vData(ch) = mSampleCache(cell.Sample)
+            vLen(ch) = inst.Bytes
+            vVol(ch) = CSng(inst.Volume / 64#)
+            vLoop(ch) = inst.RepeatLength > 2
+            vRepStart(ch) = inst.RepeatStart
+            If vLoop(ch) Then
+                vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
+                If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
+            Else
+                vRepEnd(ch) = inst.Bytes
+            End If
+            vFine(ch) = inst.Finetune And &HF
+
+            If cell.Period > 0 Then
+                noteFine = vFine(ch)
+                If e = 14 And hi = 5 Then noteFine = lo
+                If e = 3 Or e = 5 Then
+                    ' Tone portamento sets a target without retriggering DMA,
+                    ' resetting LFO phases, or starting an idle voice.
+                    vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
+                Else
+                    vActive(ch) = True
                     vPos(ch) = 0#
-                    If (e = 3 Or e = 5) And previousPeriod > 0# Then
-                        ' Tone portamento starts from the previous note and
-                        ' slides toward the new pitch.
-                        vPeriod(ch) = previousPeriod
-                        vTarget(ch) = CDbl(cell.Period)
-                    Else
-                        vPeriod(ch) = CDbl(cell.Period)
-                        vTarget(ch) = vPeriod(ch)
-                    End If
-                    ' PT2 only resets an oscillator phase when its waveform
-                    ' control does not have the "keep phase" bit set.
+                    vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
+                    vTarget(ch) = vPeriod(ch)
                     If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
                     If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
                     vCutTick(ch) = -1
                     vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
                 End If
-                ' A sample number without a note keeps the current period and
-                ' sample position, but still reloads the sample header (most
-                ' importantly the sample volume) like Protracker.
-                vVol(ch) = CSng(inst.Volume / 64#)
-                vLoop(ch) = inst.RepeatLength > 2
-                vRepStart(ch) = inst.RepeatStart
-                If vLoop(ch) Then
-                    vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
-                    If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
-                Else
-                    vRepEnd(ch) = inst.Bytes
-                End If
-                vFine(ch) = inst.Finetune And &HF
             End If
-        ElseIf cell.Period > 0 And cell.Sample = 0 And vActive(ch) Then
+        ElseIf cell.Period > 0 And cell.Sample = 0 And Len(vData(ch)) > 0 Then
+            ' A note without a sample number still retriggers the selected
+            ' sample in PT2, except for tone portamento which only retargets
+            ' the slide.
+            noteFine = vFine(ch)
+            If e = 14 And hi = 5 Then noteFine = lo
             If e = 3 Or e = 5 Then
-                vTarget(ch) = CDbl(cell.Period)
+                vTarget(ch) = PortaPeriodForNote(cell.Period, noteFine)
             Else
-                vPeriod(ch) = CDbl(cell.Period)
+                vActive(ch) = True
+                vPos(ch) = 0#
+                vPeriod(ch) = PeriodForNote(cell.Period, noteFine)
                 vTarget(ch) = vPeriod(ch)
+                If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
+                If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
+                vCutTick(ch) = -1
+                vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
             End If
-            If (vVibWave(ch) And &H4) = 0 Then vVibPos(ch) = 0
-            If (vTremWave(ch) And &H4) = 0 Then vTremPos(ch) = 0
         End If
 
         If e = 0 Then
@@ -504,7 +564,7 @@ Private Function MixFrame(ByVal tick As Long) As Double
     Dim acc As Double
     Dim period As Double, level As Double, sampleValue As Double
     Dim idx As Long, arpDelta As Long, vibOffset As Double, trem As Double
-    Dim fine As Long, frac As Double, vibPhase As Long, tremPhase As Long
+    Dim frac As Double, vibPhase As Long, tremPhase As Long
 
     For ch = 0 To CHANNEL_COUNT - 1
         If vActive(ch) Then
@@ -531,12 +591,6 @@ Private Function MixFrame(ByVal tick As Long) As Double
                 vibOffset = Fix(CDbl(WaveValue(vibPhase, vVibWave(ch))) * CDbl(vVibDepth(ch)) / 128#)
                 period = period + vibOffset
                 If period < 1# Then period = 1#
-            End If
-
-            If vFine(ch) <> 0 Then
-                fine = vFine(ch)
-                If fine > 7 Then fine = fine - 16
-                period = period / (2# ^ (CDbl(fine) / (12# * 8#)))
             End If
 
             If period <= 0# Then
