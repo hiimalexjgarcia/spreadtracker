@@ -430,8 +430,14 @@ Private Sub AdvanceRow()
         If mRow < PATTERN_ROWS - 1 Then
             mRow = mRow + 1
         Else
-            mOrderPos = mPendingJump
-            If mOrderPos > UBound(mOrderList) Then mOrderPos = UBound(mOrderList)
+            If mOrderPos + 1 >= mOrders Then
+                ' A Bxx on the final requested order ends the song rather than
+                ' looping back until the frame cap.
+                mOrderPos = mOrders
+            Else
+                mOrderPos = mPendingJump
+                If mOrderPos > mOrders - 1 Then mOrderPos = mOrders - 1
+            End If
             mRow = 0
             mPendingJump = -1
         End If

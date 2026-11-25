@@ -373,7 +373,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             if row < PATTERN_ROWS - 1:
                 row += 1
             else:
-                order_pos = max(0, min(pending_jump, len(order) - 1))
+                if order_pos + 1 >= orders:
+                    # A Bxx on the final requested order ends the song rather
+                    # than looping back for another pass until the frame cap.
+                    order_pos = orders
+                else:
+                    order_pos = max(0, min(pending_jump, orders - 1))
                 row = 0
                 pending_jump = None
         elif pending_break is None:

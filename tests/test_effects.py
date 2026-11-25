@@ -274,6 +274,35 @@ class EffectTests(unittest.TestCase):
         rms_plain = sum(value * value for value in plain) / len(plain)
         self.assertLess(rms_jumped, rms_plain / 10)
 
+    def test_bxx_on_final_order_ends_render(self) -> None:
+        # ELYSIUM.MOD places B09 on the last row of its final order. It must
+        # stop there, not loop back and render until the safety frame cap.
+        jump_rows = empty_rows()
+        jump_rows[63][0] = Cell(effect=0x0B, param=0x00)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jump_frames, _ = render_frames(
+                make_song(
+                    jump_rows,
+                    order=[0, 1],
+                    patterns=[empty_rows(), jump_rows],
+                    orders=2,
+                ),
+                Path(temp_dir) / "final-jump.wav",
+            )
+            plain_frames, _ = render_frames(
+                make_song(
+                    empty_rows(),
+                    order=[0, 1],
+                    patterns=[empty_rows(), empty_rows()],
+                    orders=2,
+                ),
+                Path(temp_dir) / "plain.wav",
+            )
+
+        self.assertGreater(jump_frames, plain_frames // 2)
+        self.assertLess(jump_frames, plain_frames + 1000)
+
     def test_7xx_tremolo_modulates_volume(self) -> None:
         rows = empty_rows(2)
         rows[0][0] = NOTE
