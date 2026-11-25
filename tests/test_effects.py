@@ -109,7 +109,13 @@ class EffectTests(unittest.TestCase):
         self.assertEqual(voice.period, 300.0)
 
     def test_vibrato_phase_and_waveforms(self) -> None:
-        voice = Voice(active=True, period=428.0, vib_speed=4, vib_depth=3)
+        voice = Voice(
+            active=True,
+            period=428.0,
+            vib_speed=4,
+            vib_depth=3,
+            vib_active=True,
+        )
         advance_voice_tick(voice)
         self.assertEqual(voice.vib_pos, 4)
         # MOD/XM oscillator waveforms are 64 points long, so speed 4 repeats
@@ -125,7 +131,13 @@ class EffectTests(unittest.TestCase):
         self.assertEqual(wave_value(32, 2), -127)
 
     def test_vibrato_uses_phase_before_current_tick_advance(self) -> None:
-        voice = Voice(active=True, period=428.0, vib_speed=4, vib_depth=6)
+        voice = Voice(
+            active=True,
+            period=428.0,
+            vib_speed=4,
+            vib_depth=6,
+            vib_active=True,
+        )
         voice.vib_pos = 4  # stored phase after this tick's advance
         self.assertEqual(effective_period(voice, 0), 428.0)
         # Phase 0 is the sine table's zero crossing, not phase 4.
@@ -133,6 +145,25 @@ class EffectTests(unittest.TestCase):
 
         voice.vib_pos = 16 + voice.vib_speed  # sine peak was at phase 16
         self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
+
+    def test_vibrato_stops_on_rows_without_a_command(self) -> None:
+        # OpenMPT clears the vibrato flag at every row boundary. Speed/depth
+        # remain in memory, but the LFO neither modulates nor advances until a
+        # 4xx/6xx command turns it back on.
+        voice = Voice(
+            active=True,
+            period=428.0,
+            vib_speed=4,
+            vib_depth=6,
+            vib_active=True,
+        )
+        voice.vib_pos = 20  # sine peak was at phase 16
+        self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
+
+        voice.vib_active = False
+        advance_voice_tick(voice)
+        self.assertEqual(voice.vib_pos, 20)
+        self.assertEqual(effective_period(voice, 1), 428.0)
 
     def test_6xx_keeps_vibrato_memory_and_only_slides_volume(self) -> None:
         # 6xy's nibbles are a volume slide, not new vibrato settings. A60 and

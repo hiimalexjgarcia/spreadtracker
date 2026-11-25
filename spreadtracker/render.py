@@ -103,10 +103,12 @@ class Voice:
     port_speed: int = 0
     vib_speed: int = 0
     vib_depth: int = 0
+    vib_active: bool = False
     vib_pos: int = 0
     vib_wave: int = 0
     trem_speed: int = 0
     trem_depth: int = 0
+    trem_active: bool = False
     trem_pos: int = 0
     trem_wave: int = 0
     cut_tick: int | None = None
@@ -130,8 +132,12 @@ def advance_voice_tick(voice: Voice) -> None:
         elif voice.period > voice.target_period:
             voice.period = max(voice.target_period, voice.period - voice.port_speed)
 
-    voice.vib_pos = (voice.vib_pos + voice.vib_speed) % WAVE_PHASE_STEPS
-    voice.trem_pos = (voice.trem_pos + voice.trem_speed) % WAVE_PHASE_STEPS
+    # OpenMPT clears the vibrato/tremolo flags at every row boundary, so the
+    # phase only advances on rows that carry an active 4xx/6xx/7xx command.
+    if voice.vib_active:
+        voice.vib_pos = (voice.vib_pos + voice.vib_speed) % WAVE_PHASE_STEPS
+    if voice.trem_active:
+        voice.trem_pos = (voice.trem_pos + voice.trem_speed) % WAVE_PHASE_STEPS
 
 
 def effective_period(voice: Voice, tick: int) -> float:
@@ -147,7 +153,7 @@ def effective_period(voice: Voice, tick: int) -> float:
     # table delta scaled by depth / 64 (truncated toward zero like OpenMPT).
     # The stored phase has already been advanced for this tick, so use the
     # previous phase: OpenMPT reads the oscillator, then advances it.
-    if voice.vib_depth and tick > 0:
+    if voice.vib_active and voice.vib_depth and tick > 0:
         phase = (voice.vib_pos - voice.vib_speed) % WAVE_PHASE_STEPS
         period += int(wave_value(phase, voice.vib_wave) * voice.vib_depth / 64)
 
@@ -263,6 +269,13 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             effect = cell.effect
             param = cell.param
             up, down = _nibbles(param)
+
+            # OpenMPT clears the vibrato/tremolo flags at every row boundary;
+            # only a 4xx/6xx/7xx command on this row turns the oscillator back
+            # on. Speed/depth remain in effect memory, but the LFO must not
+            # keep modulating (or advancing) on rows without a command.
+            voice.vib_active = effect in (0x04, 0x06)
+            voice.trem_active = effect == 0x07
 
             if cell.sample > 0:
                 instrument = song.instruments.get(cell.sample)
@@ -463,7 +476,7 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             # and the MOD volume delta is depth / 32 rather than depth / 64.
             # Like vibrato, the stored phase is one advance ahead of the value
             # OpenMPT uses for the current tick.
-            if voice.trem_depth and tick > 0:
+            if voice.trem_active and voice.trem_depth and tick > 0:
                 phase = (voice.trem_pos - voice.trem_speed) % WAVE_PHASE_STEPS
                 trem = (
                     wave_value(phase, voice.trem_wave)

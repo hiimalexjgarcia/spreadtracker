@@ -75,10 +75,12 @@ Private vPortDown(0 To CHANNEL_COUNT - 1) As Long
 Private vPortSpeed(0 To CHANNEL_COUNT - 1) As Long
 Private vVibSpeed(0 To CHANNEL_COUNT - 1) As Long
 Private vVibDepth(0 To CHANNEL_COUNT - 1) As Long
+Private vVibActive(0 To CHANNEL_COUNT - 1) As Boolean
 Private vVibPos(0 To CHANNEL_COUNT - 1) As Long
 Private vVibWave(0 To CHANNEL_COUNT - 1) As Long
 Private vTremSpeed(0 To CHANNEL_COUNT - 1) As Long
 Private vTremDepth(0 To CHANNEL_COUNT - 1) As Long
+Private vTremActive(0 To CHANNEL_COUNT - 1) As Boolean
 Private vTremPos(0 To CHANNEL_COUNT - 1) As Long
 Private vTremWave(0 To CHANNEL_COUNT - 1) As Long
 Private vCutTick(0 To CHANNEL_COUNT - 1) As Long
@@ -242,10 +244,12 @@ Private Sub InitMixer()
         vPortSpeed(ch) = 0
         vVibSpeed(ch) = 0
         vVibDepth(ch) = 0
+        vVibActive(ch) = False
         vVibPos(ch) = 0
         vVibWave(ch) = 0
         vTremSpeed(ch) = 0
         vTremDepth(ch) = 0
+        vTremActive(ch) = False
         vTremPos(ch) = 0
         vTremWave(ch) = 0
         vCutTick(ch) = -1
@@ -290,6 +294,12 @@ Private Sub ProcessRow()
         p = cell.Param
         hi = p \ 16
         lo = p Mod 16
+
+        ' OpenMPT clears the vibrato/tremolo flags at every row boundary; only
+        ' a 4xx/6xx/7xx command on this row turns the oscillator back on. Speed
+        ' and depth stay in effect memory, but the LFO must stop otherwise.
+        vVibActive(ch) = (e = 4 Or e = 6)
+        vTremActive(ch) = (e = 7)
 
         If cell.Sample > 0 Then
             inst = GetInstrument(cell.Sample)
@@ -514,7 +524,7 @@ Private Function MixFrame(ByVal tick As Long) As Double
             ' Afterwards it is a linear period slide of depth / 64, truncated
             ' toward zero. The stored phase is already advanced for this tick,
             ' so read the previous phase: OpenMPT reads, then advances.
-            If vVibDepth(ch) <> 0 And tick > 0 Then
+            If vVibActive(ch) And vVibDepth(ch) <> 0 And tick > 0 Then
                 vibPhase = (vVibPos(ch) - vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
                 If vibPhase < 0 Then vibPhase = vibPhase + WAVE_PHASE_STEPS
                 vibOffset = Fix(CDbl(WaveValue(vibPhase, vVibWave(ch))) * CDbl(vVibDepth(ch)) / 64#)
@@ -542,7 +552,7 @@ Private Function MixFrame(ByVal tick As Long) As Double
                 vRamp(ch) = vRamp(ch) - 1
             End If
 
-            If vTremDepth(ch) <> 0 And tick > 0 Then
+            If vTremActive(ch) And vTremDepth(ch) <> 0 And tick > 0 Then
                 tremPhase = (vTremPos(ch) - vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
                 If tremPhase < 0 Then tremPhase = tremPhase + WAVE_PHASE_STEPS
                 trem = CDbl(WaveValue(tremPhase, vTremWave(ch))) * CDbl(vTremDepth(ch)) / (32# * 64#)
@@ -584,8 +594,10 @@ Private Sub ApplyTickEffects(ByVal ch As Long)
         End If
     End If
 
-    vVibPos(ch) = (vVibPos(ch) + vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
-    vTremPos(ch) = (vTremPos(ch) + vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
+    ' The row command controls whether the oscillator is active. Effect memory
+    ' keeps speed/depth, but an inactive LFO must not advance its phase.
+    If vVibActive(ch) Then vVibPos(ch) = (vVibPos(ch) + vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
+    If vTremActive(ch) Then vTremPos(ch) = (vTremPos(ch) + vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
 End Sub
 
 Private Function WaveValue(ByVal position As Long, ByVal waveform As Long) As Long
