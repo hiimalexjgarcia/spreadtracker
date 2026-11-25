@@ -50,40 +50,40 @@ DEFAULT_WAV = "spreadtracker.wav"
 
 EFFECT_INFO: tuple[tuple[str, str, str, str], ...] = (
     ("0", "Arpeggio", "Fast three-note arpeggio: 0XY plays note, note+X, note+Y semitones.", "Rendered"),
-    ("1", "Portamento up", "Slide sample playback rate upward.", "Parsed only"),
-    ("2", "Portamento down", "Slide sample playback rate downward.", "Parsed only"),
-    ("3", "Tone portamento", "Slide toward the new note period.", "Parsed only"),
-    ("4", "Vibrato", "Period modulation with speed/depth parameters.", "Parsed only"),
-    ("5", "Volume slide + vibrato", "Combines effects A and 4.", "Parsed only"),
-    ("6", "Volume slide + vibrato", "Combines effects 5 and 4.", "Parsed only"),
-    ("7", "Tremolo", "Volume modulation.", "Parsed only"),
-    ("8", "Set panning", "Protracker-specific pan command (rare).", "Parsed only"),
+    ("1", "Portamento up", "Slide sample playback rate upward.", "Rendered"),
+    ("2", "Portamento down", "Slide sample playback rate downward.", "Rendered"),
+    ("3", "Tone portamento", "Slide toward the new note period.", "Rendered"),
+    ("4", "Vibrato", "Period modulation with speed/depth parameters.", "Rendered"),
+    ("5", "Volume slide + portamento", "Combines effects A and 3.", "Rendered"),
+    ("6", "Volume slide + vibrato", "Combines effects A and 4.", "Rendered"),
+    ("7", "Tremolo", "Volume modulation.", "Rendered"),
+    ("8", "Set panning", "Protracker-specific pan command (inaudible in mono).", "Parsed only"),
     ("9", "Sample offset", "Start sample at offset XX00 bytes.", "Rendered"),
     ("A", "Volume slide", "Up/down volume slide: X=up, Y=down.", "Rendered"),
-    ("B", "Pattern jump", "Jump to pattern XX on the next pattern boundary.", "Parsed only"),
+    ("B", "Pattern jump", "Jump to pattern XX at the end of the current pattern.", "Rendered"),
     ("C", "Set volume", "Set channel volume to XX (0-64).", "Rendered"),
-    ("D", "Pattern break", "Break to row XX of the next pattern.", "Parsed only"),
-    ("E", "Extended", "Subcommands E0-EF; see rows below.", "Parsed only"),
-    ("F", "Set speed / tempo", "F01-F1F set speed; F20-FF set BPM.", "Parsed only"),
+    ("D", "Pattern break", "Break to row XX of the next pattern.", "Rendered"),
+    ("E", "Extended", "Subcommands E0-EF; see rows below.", "Partial"),
+    ("F", "Set speed / tempo", "F01-F1F set speed; F20-FF set BPM.", "Rendered"),
 )
 
-EFFECT_SUB_INFO: tuple[tuple[str, str, str], ...] = (
-    ("E0", "Filter on/off", "Amiga hardware filter control."),
-    ("E1", "Fine portamento up", "Small upward pitch slide."),
-    ("E2", "Fine portamento down", "Small downward pitch slide."),
-    ("E3", "Glissando", "Force portamento to chromatic steps."),
-    ("E4", "Set vibrato waveform", "0=sine, 1=ramp down, 2=square, 3=ramp up."),
-    ("E5", "Set finetune", "Override sample finetune."),
-    ("E6", "Pattern loop", "Loop a pattern section."),
-    ("E7", "Set tremolo waveform", "Waveform select for tremolo."),
-    ("E8", "Set panning", "Set channel pan position."),
-    ("E9", "Retrigger note", "Retrigger the current sample."),
-    ("EA", "Fine volume slide up", "Small volume increase."),
-    ("EB", "Fine volume slide down", "Small volume decrease."),
-    ("EC", "Note cut", "Cut the note after X ticks."),
-    ("ED", "Note delay", "Delay the note by X ticks."),
-    ("EE", "Pattern delay", "Repeat the row X times."),
-    ("EF", "Invert loop", "Amiga sample loop inversion."),
+EFFECT_SUB_INFO: tuple[tuple[str, str, str, str], ...] = (
+    ("E0", "Filter on/off", "Amiga hardware filter control.", "Parsed only"),
+    ("E1", "Fine portamento up", "Small upward pitch slide.", "Rendered"),
+    ("E2", "Fine portamento down", "Small downward pitch slide.", "Rendered"),
+    ("E3", "Glissando", "Force portamento to chromatic steps.", "Parsed only"),
+    ("E4", "Set vibrato waveform", "0=sine, 1=ramp down, 2=square, 3=ramp up.", "Rendered"),
+    ("E5", "Set finetune", "Override sample finetune.", "Rendered"),
+    ("E6", "Pattern loop", "Loop a pattern section.", "Parsed only"),
+    ("E7", "Set tremolo waveform", "Waveform select for tremolo.", "Rendered"),
+    ("E8", "Set panning", "Set channel pan position.", "Parsed only"),
+    ("E9", "Retrigger note", "Retrigger the current sample.", "Rendered"),
+    ("EA", "Fine volume slide up", "Small volume increase.", "Rendered"),
+    ("EB", "Fine volume slide down", "Small volume decrease.", "Rendered"),
+    ("EC", "Note cut", "Cut the note after X ticks.", "Rendered"),
+    ("ED", "Note delay", "Delay the note by X ticks.", "Parsed only"),
+    ("EE", "Pattern delay", "Repeat the row X times.", "Rendered"),
+    ("EF", "Invert loop", "Amiga sample loop inversion.", "Parsed only"),
 )
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
@@ -151,8 +151,8 @@ def build_start_sheet(wb: Workbook, mod: Module, out_path: Path) -> None:
         ("Sheets", "Song = settings/order list · Patterns = pattern grid · Instruments = sample headers · Effects = command reference · SampleData = embedded PCM (hidden)."),
         ("To play (Excel)", "Import vba/TrackerCore.bas and vba/AudioRender.bas into the VBA editor, save as .xlsm, enable macros, and run RenderAndPlay."),
         ("To play (Calc)", "Copy calc/Spreadtracker.py and the spreadtracker package into LibreOffice's Scripts/python folder, open this workbook in Calc, and run RenderAndPlay. See README.md."),
-        ("Current renderer", "Note triggers, signed 8-bit samples, 0xx arpeggio, 9xx offsets, Axx volume slide, Cxx set-volume, static tempo/speed, 4-channel mono mix, nearest-neighbour resampling. Other effects are parsed but not yet rendered."),
-        ("Timing", "Protracker timing is approximated as ticks/sec = BPM * 2 / 5. Rows advance once per Speed tick."),
+        ("Current renderer", "Tick-driven renderer: note triggers, signed 8-bit samples, linear interpolation, arpeggio (0xx), portamento (1xx/2xx/3xx/5xx), vibrato (4xx/6xx), tremolo (7xx), sample offsets (9xx), volume slides (5xx/6xx/Axx), Bxx/Dxx navigation, Cxx volume, common E subcommands, and Fxx speed/tempo."),
+        ("Timing", "Protracker timing: ticks/sec = BPM * 2 / 5. Rows advance once per Speed ticks; Fxx changes take effect immediately."),
         ("Sample numbers", "Shown as two-digit decimal values in the grid (not hexadecimal) to reduce ambiguity."),
         ("Rebuild", f"python tools/build_workbook.py --mod tests/fixtures/space_debris.mod --out {DEFAULT_WORKBOOK}"),
         ("Platform", "Playback requires Windows desktop Excel with macros enabled; Excel for the web cannot run VBA."),
@@ -383,8 +383,8 @@ def build_effects_sheet(wb: Workbook) -> None:
         ws.cell(row=row, column=col, value=text)
     style_header_row(ws, row, 1, 4)
     row += 1
-    for code, name, description in EFFECT_SUB_INFO:
-        for col, value in enumerate([code, name, description, "Parsed only"], start=1):
+    for code, name, description, status in EFFECT_SUB_INFO:
+        for col, value in enumerate([code, name, description, status], start=1):
             ws.cell(row=row, column=col, value=value).border = BORDER
         ws.cell(row=row, column=1).font = Font(bold=True, name="Consolas")
         ws.cell(row=row, column=3).alignment = Alignment(wrap_text=True, vertical="top")

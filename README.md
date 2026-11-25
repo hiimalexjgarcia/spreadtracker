@@ -19,6 +19,7 @@ WAV, and play it.
 - [vba/AudioRender.bas](vba/AudioRender.bas) — Excel 4-channel WAV renderer and playback entry points
 - [tests/fixtures/space_debris.mod](tests/fixtures/space_debris.mod) — sample 4-channel Protracker module
 - [tests/test_calc_render.py](tests/test_calc_render.py) — headless Calc-path verification
+- [tests/test_effects.py](tests/test_effects.py) — synthetic checks for tick-driven effects
 - [tools/build_workbook.py](tools/build_workbook.py) — workbook generator
 - [tools/verify_workbook.py](tools/verify_workbook.py) — generated-workbook checks
 - [tools/verify_calc_live.py](tools/verify_calc_live.py) — live headless Calc/UNO macro test
@@ -42,21 +43,27 @@ A pattern cell looks like `C-4 07 C40`: note, two-digit **decimal** sample
 number, and effect code with two hex parameter digits. `--- -- ...` means an
 empty cell.
 
-The renderer currently supports:
+The renderer is tick-driven and currently supports:
 
-- note triggers and instrument/sample volume
-- signed 8-bit MOD sample decoding
+- note triggers and instrument/sample volume (MOD volume byte `0` means 64)
+- signed 8-bit MOD sample decoding with loops and linear interpolation
 - `0xx` arpeggio
+- `1xx`/`2xx` portamento and `3xx`/`5xx` tone portamento
+- `4xx`/`6xx` vibrato and `7xx` tremolo
 - `9xx` sample offset
-- `Axx` volume slide
+- `Axx`, `5xx`, and `6xx` volume slides
+- `Bxx` pattern jump and `Dxx` pattern break
 - `Cxx` set volume
-- static tempo/speed from the `Song` sheet
-- 4-channel mono mix at 16-bit PCM, nearest-neighbour resampling
+- common `E` subcommands: fine portamento, vibrato/tremolo waveform, finetune,
+  retrigger, fine volume slide, note cut, and pattern delay
+- live `Fxx` speed/tempo changes
+- 4-channel mono mix at 16-bit PCM
 - Win32 `sndPlaySound` playback from Excel
 - Python-UNO playback from Calc, with `sounddevice`/`pygame` or a system player fallback
 
-Portamento, vibrato, tremolo, pattern jump/break, and live `Fxx` tempo changes
-are parsed into the grid but are **not yet rendered**.
+`8xx` panning, `E0x` filter, `E3x` glissando, `E6x` pattern loop, `E8x` panning,
+`EDx` note delay, and `EFx` invert loop are parsed but not rendered. Because the
+output is mono, panning does not affect the rendered WAV.
 
 ## Using it
 
@@ -115,7 +122,7 @@ python tools/verify_workbook.py \
   --mod tests/fixtures/space_debris.mod \
   --workbook workbook/spreadtracker.xlsx
 
-python -m unittest tests.test_calc_render
+python -m unittest tests.test_calc_render tests.test_effects
 ```
 
 To verify the real Calc macro path, with LibreOffice and `python3-uno`
@@ -148,9 +155,9 @@ the Calc path uses the shared Python renderer.
 
 ## Roadmap
 
-- Render the remaining Protracker effects (portamento, vibrato, tremolo).
-- Handle `Fxx` speed/tempo changes and `Bxx`/`Dxx` song navigation.
+- Render the remaining `E` subcommands (`E0x`, `E3x`, `E6x`, `EDx`, `EFx`).
 - Add per-channel volume/tempo automation and stereo panning.
+- Reduce the remaining fidelity gap to OpenMPT (filtering and mixer edge cases).
 - Add an in-workbook editor mode: edit a selected pattern, then re-render.
 - Add a native `.ods` workbook generator for Calc.
 - Optional: write `.mod`/`.xm`/`.it` files from worksheet data.
