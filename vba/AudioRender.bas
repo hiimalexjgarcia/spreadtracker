@@ -6,10 +6,12 @@ Option Explicit
 ' Spreadtracker renderer: reads patterns from TrackerCore, mixes four channels into
 ' a 16-bit mono WAV, then plays it with the Windows multimedia API.
 '
-' Implemented: note triggers, sample loops, sample offsets (9xx), instrument
-' volume and Cxx set-volume, static tempo/speed, nearest-neighbour resampling.
-' Parsed but not yet rendered: slides, vibrato, tremolo, pattern jump/break,
-' arpeggio, envelope/effect subcommands, live speed/tempo changes.
+' Implemented: note triggers, sample loops, arpeggio (0xx), sample offsets
+' (9xx), volume slide (Axx), instrument volume, Cxx set-volume, static
+' tempo/speed, and nearest-neighbour resampling. MOD sample bytes are decoded
+' as signed 8-bit PCM.
+' Parsed but not yet rendered: portamento, vibrato, tremolo, pattern
+' jump/break, envelope/effect subcommands, and live speed/tempo changes.
 ' ---------------------------------------------------------------------------
 
 #If VBA7 Then
@@ -80,6 +82,11 @@ Public Function RenderSongToWav() As String
     Dim vLoop(0 To CHANNEL_COUNT - 1) As Boolean
     Dim vRepStart(0 To CHANNEL_COUNT - 1) As Long
     Dim vRepEnd(0 To CHANNEL_COUNT - 1) As Long
+    Dim vBasePeriod(0 To CHANNEL_COUNT - 1) As Double
+    Dim vArpUp(0 To CHANNEL_COUNT - 1) As Long
+    Dim vArpDown(0 To CHANNEL_COUNT - 1) As Long
+    Dim vSlideUp(0 To CHANNEL_COUNT - 1) As Long
+    Dim vSlideDown(0 To CHANNEL_COUNT - 1) As Long
 
     ' Sample bytes are decoded once per sample number.
     Dim sampleCache(1 To 31) As Variant
@@ -92,6 +99,10 @@ Public Function RenderSongToWav() As String
     framesPerRow = CLng(rowSeconds * rate)
     If framesPerRow < 1 Then framesPerRow = 1
 
+    Dim ticksPerRow As Long
+    ticksPerRow = CLng(speed)
+    If ticksPerRow < 1 Then ticksPerRow = 1
+
     Dim patternIndex As Long, row As Long, ch As Long
     Dim notes() As TNote
     Dim inst As TInstrument
@@ -103,95 +114,149 @@ Public Function RenderSongToWav() As String
     Dim acc As Double
     Dim dataBytes As Variant
     Dim upper As Long, sampleIndex As Long
-    Dim rowIndex As Long
+    Dim rowIndex As Long, withinRow As Long, tick As Long
+    Dim rawByte As Long, period As Double, arpDelta As Long, newVol As Double
 
     For f = 0 To totalFrames - 1
-        If f Mod framesPerRow = 0 Then
-            rowIndex = f \ framesPerRow
-            If rowIndex < totalRows Then
-                patternIndex = rowIndex \ PATTERN_ROWS
-                If patternIndex <> cachedPattern Then
-                    ReadPattern orderList(patternIndex), notes
-                    cachedPattern = patternIndex
+        withinRow = f Mod framesPerRow
+        rowIndex = f \ framesPerRow
+        tick = CLng(withinRow * ticksPerRow \ framesPerRow)
+        If tick >= ticksPerRow Then tick = ticksPerRow - 1
+
+        If withinRow = 0 And rowIndex < totalRows Then
+            patternIndex = rowIndex \ PATTERN_ROWS
+            If patternIndex <> cachedPattern Then
+                ReadPattern orderList(patternIndex), notes
+                cachedPattern = patternIndex
+            End If
+
+            row = rowIndex Mod PATTERN_ROWS
+
+            For ch = 0 To CHANNEL_COUNT - 1
+                If notes(row, ch).Period > 0 And notes(row, ch).Sample > 0 Then
+                    inst = GetInstrument(notes(row, ch).Sample)
+
+                    If Not sampleLoaded(notes(row, ch).Sample) Then
+                        sampleCache(notes(row, ch).Sample) = GetSampleBytes(notes(row, ch).Sample)
+                        sampleLoaded(notes(row, ch).Sample) = True
+                    End If
+
+                    vData(ch) = sampleCache(notes(row, ch).Sample)
+                    vActive(ch) = True
+                    vBasePeriod(ch) = CDbl(notes(row, ch).Period)
+                    vLoop(ch) = inst.RepeatLength > 1
+                    vRepStart(ch) = inst.RepeatStart
+                    If inst.RepeatLength > 2 Then
+                        vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
+                    Else
+                        vRepEnd(ch) = inst.Bytes
+                    End If
+
+                    vStep(ch) = AMIGA_CLOCK / (vBasePeriod(ch) * 2# * CDbl(rate))
+                    vVol(ch) = CSng(inst.Volume / 64#)
+
+                    If notes(row, ch).Effect = 12 Then  ' Cxx - set volume
+                        vVol(ch) = CSng(notes(row, ch).Param / 64#)
+                    End If
+
+                    vPos(ch) = 0#
+                    If notes(row, ch).Effect = 9 Then  ' 9xx - sample offset
+                        vPos(ch) = CDbl(notes(row, ch).Param * 256)
+                    End If
+                ElseIf vActive(ch) Then
+                    ' Effects without a new note still affect the running voice.
+                    If notes(row, ch).Effect = 9 Then  ' 9xx - sample offset
+                        vPos(ch) = CDbl(notes(row, ch).Param * 256)
+                    ElseIf notes(row, ch).Effect = 12 Then  ' Cxx - set volume
+                        vVol(ch) = CSng(notes(row, ch).Param / 64#)
+                    End If
                 End If
 
-                row = rowIndex Mod PATTERN_ROWS
-
-                For ch = 0 To CHANNEL_COUNT - 1
-                    If notes(row, ch).Period > 0 And notes(row, ch).Sample > 0 Then
-                        inst = GetInstrument(notes(row, ch).Sample)
-
-                        If Not sampleLoaded(notes(row, ch).Sample) Then
-                            sampleCache(notes(row, ch).Sample) = GetSampleBytes(notes(row, ch).Sample)
-                            sampleLoaded(notes(row, ch).Sample) = True
-                        End If
-
-                        vData(ch) = sampleCache(notes(row, ch).Sample)
-                        vActive(ch) = True
-                        vLoop(ch) = inst.RepeatLength > 1
-                        vRepStart(ch) = inst.RepeatStart
-                        If inst.RepeatLength > 2 Then
-                            vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
-                        Else
-                            vRepEnd(ch) = inst.Bytes
-                        End If
-
-                        vStep(ch) = AMIGA_CLOCK / (CDbl(notes(row, ch).Period) * 2# * CDbl(rate))
-                        vVol(ch) = CSng(inst.Volume / 64#)
-
-                        If notes(row, ch).Effect = 12 Then  ' Cxx - set volume
-                            vVol(ch) = CSng(notes(row, ch).Param / 64#)
-                        End If
-
-                        vPos(ch) = 0#
-                        If notes(row, ch).Effect = 9 Then  ' 9xx - sample offset
-                            vPos(ch) = CDbl(notes(row, ch).Param * 256)
-                        End If
+                If vActive(ch) Then
+                    If notes(row, ch).Effect = 0 Then  ' 0xy - arpeggio
+                        vArpUp(ch) = notes(row, ch).Param \ 16
+                        vArpDown(ch) = notes(row, ch).Param Mod 16
+                    Else
+                        vArpUp(ch) = 0
+                        vArpDown(ch) = 0
                     End If
-                Next ch
-            End If
+
+                    If notes(row, ch).Effect = 10 Then  ' Axy - volume slide
+                        vSlideUp(ch) = notes(row, ch).Param \ 16
+                        vSlideDown(ch) = notes(row, ch).Param Mod 16
+                    Else
+                        vSlideUp(ch) = 0
+                        vSlideDown(ch) = 0
+                    End If
+                End If
+            Next ch
         End If
 
         acc = 0#
 
         For ch = 0 To CHANNEL_COUNT - 1
             If vActive(ch) Then
-                dataBytes = vData(ch)
-                If (VarType(dataBytes) And vbArray) <> 0 Then
-                    upper = UBound(dataBytes)
-                    sampleIndex = CLng(vPos(ch))
+                If tick > 0 And (vSlideUp(ch) <> 0 Or vSlideDown(ch) <> 0) Then
+                    newVol = CDbl(vVol(ch)) + CDbl(vSlideUp(ch) - vSlideDown(ch)) / 64#
+                    If newVol < 0# Then newVol = 0#
+                    If newVol > 1# Then newVol = 1#
+                    vVol(ch) = CSng(newVol)
+                End If
 
-                    If sampleIndex >= vRepEnd(ch) Then
-                        If vLoop(ch) And vRepEnd(ch) > vRepStart(ch) Then
-                            vPos(ch) = CDbl(vRepStart(ch))
-                            sampleIndex = CLng(vPos(ch))
-                        Else
-                            vActive(ch) = False
-                        End If
-                    End If
-
-                    If sampleIndex > upper Then
-                        If vLoop(ch) And vRepEnd(ch) > vRepStart(ch) Then
-                            vPos(ch) = CDbl(vRepStart(ch))
-                            sampleIndex = CLng(vPos(ch))
-                        Else
-                            vActive(ch) = False
-                        End If
-                    End If
-
-                    If vActive(ch) Then
-                        If sampleIndex < 0 Then sampleIndex = 0
-                        If sampleIndex > upper Then sampleIndex = upper
-                        acc = acc + ((CDbl(dataBytes(sampleIndex)) - 128#) / 128#) * CDbl(vVol(ch))
-                        vPos(ch) = vPos(ch) + vStep(ch)
-                    End If
-                Else
+                period = vBasePeriod(ch)
+                arpDelta = 0
+                If vArpUp(ch) <> 0 Or vArpDown(ch) <> 0 Then
+                    Select Case tick Mod 3
+                        Case 1
+                            arpDelta = vArpUp(ch)
+                        Case 2
+                            arpDelta = vArpDown(ch)
+                    End Select
+                End If
+                If arpDelta <> 0 Then period = period / (2# ^ (CDbl(arpDelta) / 12#))
+                If period <= 0# Then
                     vActive(ch) = False
+                Else
+                    vStep(ch) = AMIGA_CLOCK / (period * 2# * CDbl(rate))
+                    dataBytes = vData(ch)
+                    If (VarType(dataBytes) And vbArray) <> 0 Then
+                        upper = UBound(dataBytes)
+                        sampleIndex = CLng(vPos(ch))
+
+                        If sampleIndex >= vRepEnd(ch) Then
+                            If vLoop(ch) And vRepEnd(ch) > vRepStart(ch) Then
+                                vPos(ch) = CDbl(vRepStart(ch))
+                                sampleIndex = CLng(vPos(ch))
+                            Else
+                                vActive(ch) = False
+                            End If
+                        End If
+
+                        If sampleIndex > upper Then
+                            If vLoop(ch) And vRepEnd(ch) > vRepStart(ch) Then
+                                vPos(ch) = CDbl(vRepStart(ch))
+                                sampleIndex = CLng(vPos(ch))
+                            Else
+                                vActive(ch) = False
+                            End If
+                        End If
+
+                        If vActive(ch) Then
+                            If sampleIndex < 0 Then sampleIndex = 0
+                            If sampleIndex > upper Then sampleIndex = upper
+                            rawByte = CLng(dataBytes(sampleIndex))
+                            If rawByte >= 128 Then rawByte = rawByte - 256
+                            acc = acc + (CDbl(rawByte) / 128#) * CDbl(vVol(ch))
+                            vPos(ch) = vPos(ch) + vStep(ch)
+                        End If
+                    Else
+                        vActive(ch) = False
+                    End If
                 End If
             End If
         Next ch
 
-        mix(f) = CSng(acc / CDbl(CHANNEL_COUNT) * 0.8#)
+        mix(f) = CSng(acc / CDbl(CHANNEL_COUNT))
     Next f
 
     ' Write a 44-byte RIFF/WAVE header followed by 16-bit mono PCM.

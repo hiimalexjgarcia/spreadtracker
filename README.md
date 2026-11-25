@@ -45,15 +45,18 @@ empty cell.
 The renderer currently supports:
 
 - note triggers and instrument/sample volume
+- signed 8-bit MOD sample decoding
+- `0xx` arpeggio
 - `9xx` sample offset
+- `Axx` volume slide
 - `Cxx` set volume
 - static tempo/speed from the `Song` sheet
 - 4-channel mono mix at 16-bit PCM, nearest-neighbour resampling
 - Win32 `sndPlaySound` playback from Excel
 - Python-UNO playback from Calc, with `sounddevice`/`pygame` or a system player fallback
 
-Effects such as slides, vibrato, tremolo, arpeggio, pattern jump/break, and
-live `Fxx` tempo changes are parsed into the grid but are **not yet rendered**.
+Portamento, vibrato, tremolo, pattern jump/break, and live `Fxx` tempo changes
+are parsed into the grid but are **not yet rendered**.
 
 ## Using it
 
@@ -145,7 +148,7 @@ the Calc path uses the shared Python renderer.
 
 ## Roadmap
 
-- Render the remaining Protracker effects (slides, vibrato, tremolo, arpeggio).
+- Render the remaining Protracker effects (portamento, vibrato, tremolo).
 - Handle `Fxx` speed/tempo changes and `Bxx`/`Dxx` song navigation.
 - Add per-channel volume/tempo automation and stereo panning.
 - Add an in-workbook editor mode: edit a selected pattern, then re-render.

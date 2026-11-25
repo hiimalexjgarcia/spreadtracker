@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import wave
+from array import array
 from pathlib import Path
 
 from spreadtracker import calc as calc_core
@@ -42,9 +43,8 @@ class CalcRenderTests(unittest.TestCase):
         song_sheet = self.doc.Sheets.getByName("Song")
         song_sheet.cells[(1, 7)] = 8000   # B8: sample rate
         song_sheet.cells[(1, 8)] = 1      # B9: render orders
-        # Pattern 0 uses samples with non-zero instrument volumes; pattern 1
-        # relies on volume-slide effects that this prototype does not render.
-        song_sheet.cells[(1, 22)] = 0     # B23: first order position
+        # Keep the default first order: pattern 1 relies on Axx volume slides,
+        # so this also checks that those effects are rendered.
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "calc-test.wav"
@@ -60,6 +60,11 @@ class CalcRenderTests(unittest.TestCase):
                 frames = wav.readframes(wav.getnframes())
 
             self.assertTrue(any(byte != 0 for byte in frames), "rendered WAV is silent")
+
+            pcm = array("h")
+            pcm.frombytes(frames)
+            dc = abs(sum(pcm)) / len(pcm)
+            self.assertLess(dc, 1500, f"unexpected DC offset: {dc:.1f} PCM units")
 
 
 if __name__ == "__main__":
