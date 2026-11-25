@@ -151,6 +151,30 @@ It starts a private headless LibreOffice instance, installs the macro into a
 temporary user profile, invokes `RenderWav`, `RenderAndPlay`, and
 `StopPlayback`, then verifies that the WAV is non-silent.
 
+### Comparing against pt2-clone
+
+For strict ProTracker 2.3D validation, `tools/compare_pt2_render.py` uses
+[pt2-clone](https://github.com/8bitbubsy/pt2-clone)'s own MOD2WAV renderer as
+the reference instead of OpenMPT:
+
+```bash
+python3 tools/compare_pt2_render.py \
+  --pt2-src /path/to/pt2-clone \
+  --json /tmp/spreadtracker-pt2-results.json
+```
+
+The tool copies the checkout into the ignored `.pt2-compare/` directory, adds a
+small headless `PT2_RENDER_OUT` hook to that copy, builds it with CMake, renders
+every MOD fixture, and reports both zero-lag and row-aligned correlations. CMake,
+a C compiler, and SDL2 development headers are required for the build.
+
+pt2-clone's fixed-point BPM table drifts slowly against the constant-rate
+renderer, so the raw WAV correlation can be misleading. The tool estimates that
+drift from anchor windows and compares each pattern row at its locally aligned
+frame offset; the printed `drift ppm` is the measured clock difference. Use
+`--amiga-model A500` to compare the alternative Paula filter model, and
+`--rebuild` after changing the pt2-clone checkout.
+
 ## Architecture
 
 ```text
@@ -161,6 +185,7 @@ spreadtracker/
   audio.py    # optional cross-platform playback
 vba/          # Excel macro source
 calc/         # Calc macro entry points
+tools/        # workbook builder, verifiers, pt2-clone render comparison
 workbook/     # generated .xlsx
 ```
 

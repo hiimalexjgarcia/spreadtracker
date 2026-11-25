@@ -740,6 +740,21 @@ class EffectTests(unittest.TestCase):
 
         self.assertGreater(max(abs(value) for value in frames), 0.1)
 
+    def test_row_log_reports_diagnostic_row_starts(self) -> None:
+        rows = empty_rows(2)
+        rows[0][0] = NOTE
+        rows[1][0] = NOTE
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            row_log: list[tuple[int, int, int, int]] = []
+            render_song(make_song(rows), Path(temp_dir) / "rows.wav", row_log=row_log)
+
+        self.assertGreaterEqual(len(row_log), 2)
+        self.assertEqual([entry[:3] for entry in row_log[:2]], [(0, 0, 0), (0, 0, 1)])
+        self.assertTrue(
+            all(row_log[i][3] < row_log[i + 1][3] for i in range(len(row_log) - 1))
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

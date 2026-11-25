@@ -279,12 +279,19 @@ def _voice_sample(voice: Voice) -> float:
     return low * (1.0 - fraction) + high * fraction
 
 
-def render_song(song: Song, out_path: Path | str | None = None) -> Path:
+def render_song(
+    song: Song,
+    out_path: Path | str | None = None,
+    row_log: list[tuple[int, int, int, int]] | None = None,
+) -> Path:
     """Render ``song`` to a 16-bit mono WAV and return the output path.
 
     The sequencer is tick-driven so ``Fxx`` speed/tempo changes take effect in
     the row where they occur. Continuous effects are held in per-channel state
     and run on every tick after the row trigger.
+
+    ``row_log``, when supplied, is filled with ``(order, pattern, row, frame)``
+    tuples at each row start. It is diagnostic-only and does not change audio.
     """
     settings = song.settings
     tempo = _positive_float(settings.tempo, 125.0)
@@ -348,6 +355,8 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             return False
 
         load_pattern(order[order_pos])
+        if row_log is not None:
+            row_log.append((order_pos, order[order_pos], row, len(mix)))
         if current_pattern is None or row >= len(current_pattern):
             return True
 
