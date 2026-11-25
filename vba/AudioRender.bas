@@ -365,7 +365,9 @@ Private Sub ProcessRow()
         End If
         If e = 3 And p > 0 Then vPortSpeed(ch) = p
 
-        If e = 4 Or e = 6 Then
+        If e = 4 Then
+            ' 6xy only volume-slides; its nibbles are not vibrato settings.
+            ' Protracker keeps the last 4xy speed/depth as vibrato memory.
             If hi > 0 Then vVibSpeed(ch) = hi
             If lo > 0 Then vVibDepth(ch) = lo
         End If
@@ -375,8 +377,15 @@ Private Sub ProcessRow()
         End If
 
         If e = 10 Or e = 5 Or e = 6 Then
-            vSlideUp(ch) = hi
-            vSlideDown(ch) = lo
+            ' MOD/XM volume slides use nibble priority: a non-zero high nibble
+            ' means slide up and the low nibble is ignored.
+            If hi > 0 Then
+                vSlideUp(ch) = hi
+                vSlideDown(ch) = 0
+            Else
+                vSlideUp(ch) = 0
+                vSlideDown(ch) = lo
+            End If
         Else
             vSlideUp(ch) = 0
             vSlideDown(ch) = 0

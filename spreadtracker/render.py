@@ -327,7 +327,9 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             voice.port_down = param if effect == 0x02 else 0
             if effect == 0x03 and param:
                 voice.port_speed = param
-            if effect in (0x04, 0x06):
+            if effect == 0x04:
+                # 6xy only volume-slides; its nibbles are not vibrato settings.
+                # Protracker keeps the last 4xy speed/depth as vibrato memory.
                 if up:
                     voice.vib_speed = up
                 if down:
@@ -338,7 +340,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 if down:
                     voice.trem_depth = down
             if effect in (0x0A, 0x05, 0x06):
-                voice.slide_up, voice.slide_down = up, down
+                # MOD/XM volume slides use nibble priority: a non-zero high
+                # nibble means slide up and the low nibble is ignored.
+                if up:
+                    voice.slide_up, voice.slide_down = up, 0
+                else:
+                    voice.slide_up, voice.slide_down = 0, down
             else:
                 voice.slide_up, voice.slide_down = 0, 0
             if effect == 0x09:

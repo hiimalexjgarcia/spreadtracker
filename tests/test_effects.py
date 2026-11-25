@@ -134,6 +134,47 @@ class EffectTests(unittest.TestCase):
         voice.vib_pos = 16 + voice.vib_speed  # sine peak was at phase 16
         self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
 
+    def test_6xx_keeps_vibrato_memory_and_only_slides_volume(self) -> None:
+        # 6xy's nibbles are a volume slide, not new vibrato settings. A60 and
+        # A63 both slide volume up by 6, so with the same 4xy memory they must
+        # render identically.
+        with_slide = empty_rows(2)
+        with_slide[0][0] = Cell(period=428, sample=1, effect=0x04, param=0x43)
+        with_slide[1][0] = Cell(effect=0x06, param=0x63)
+        with_volume_slide = empty_rows(2)
+        with_volume_slide[0][0] = Cell(period=428, sample=1, effect=0x04, param=0x43)
+        with_volume_slide[1][0] = Cell(effect=0x0A, param=0x60)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, sixxx = render_frames(
+                make_song(with_slide, sample_rate=8000), Path(temp_dir) / "6xx.wav"
+            )
+            _, ax = render_frames(
+                make_song(with_volume_slide, sample_rate=8000), Path(temp_dir) / "Ax.wav"
+            )
+
+        self.assertEqual(sixxx, ax)
+
+    def test_mod_volume_slide_uses_high_nibble_priority(self) -> None:
+        # In MOD playback A63 slides up 6; the low nibble is ignored whenever
+        # the high nibble is non-zero, so A63 and A60 are identical.
+        with_both = empty_rows(2)
+        with_both[0][0] = Cell(period=428, sample=1, effect=0, param=0)
+        with_both[1][0] = Cell(effect=0x0A, param=0x63)
+        with_up_only = empty_rows(2)
+        with_up_only[0][0] = Cell(period=428, sample=1, effect=0, param=0)
+        with_up_only[1][0] = Cell(effect=0x0A, param=0x60)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, both = render_frames(
+                make_song(with_both, sample_rate=8000), Path(temp_dir) / "both.wav"
+            )
+            _, up = render_frames(
+                make_song(with_up_only, sample_rate=8000), Path(temp_dir) / "up.wav"
+            )
+
+        self.assertEqual(both, up)
+
     def test_volume_slide_uses_one_step_per_tick(self) -> None:
         voice = Voice(active=True, volume=0.5, slide_down=1)
         advance_voice_tick(voice)
