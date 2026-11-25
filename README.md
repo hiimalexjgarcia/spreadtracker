@@ -21,6 +21,7 @@ WAV, and play it.
 - [tests/test_calc_render.py](tests/test_calc_render.py) — headless Calc-path verification
 - [tools/build_workbook.py](tools/build_workbook.py) — workbook generator
 - [tools/verify_workbook.py](tools/verify_workbook.py) — generated-workbook checks
+- [tools/verify_calc_live.py](tools/verify_calc_live.py) — live headless Calc/UNO macro test
 
 The workbook is `.xlsx` by design: VBA cannot be embedded by the generator. To
 play audio, import the two `.bas` files into the VBA editor and save the result
@@ -83,9 +84,13 @@ Calc uses the Python renderer, so the VBA files are not needed.
    `python -m pip install -r requirements-calc.txt`. Rendering works without
    them; without a Python audio backend, Spreadtracker falls back to `aplay`,
    `afplay`, `ffplay`, or Windows Media Player.
-3. Open `workbook/spreadtracker.xlsx` in Calc and run
-   `Tools > Macros > Run Macro... > Spreadtracker > RenderAndPlay`.
-4. `RenderWav` renders without playing, and `StopPlayback` stops the last
+3. Quit and restart LibreOffice after copying or updating the macro; the macro
+   list is cached.
+4. Open `workbook/spreadtracker.xlsx` in Calc and choose
+   `Tools > Macros > Run Macro...`, then expand
+   `My Macros > Spreadtracker > Spreadtracker.py` and select `RenderWav`,
+   `RenderAndPlay`, or `StopPlayback`.
+5. `RenderWav` renders without playing, and `StopPlayback` stops the last
    playback. Status is written to `StartHere!D3`.
 
 > Some Linux distributions require the LibreOffice Python script provider
@@ -109,6 +114,17 @@ python tools/verify_workbook.py \
 
 python -m unittest tests.test_calc_render
 ```
+
+To verify the real Calc macro path, with LibreOffice and `python3-uno`
+installed, use your system Python rather than the virtual environment:
+
+```bash
+python3 tools/verify_calc_live.py
+```
+
+It starts a private headless LibreOffice instance, installs the macro into a
+temporary user profile, invokes `RenderWav`, `RenderAndPlay`, and
+`StopPlayback`, then verifies that the WAV is non-silent.
 
 ## Architecture
 
