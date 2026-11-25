@@ -145,8 +145,11 @@ def effective_period(voice: Voice, tick: int) -> float:
     # Protracker-compatible playback does not apply vibrato on the first tick
     # of a row. Afterwards MOD vibrato is a linear period slide, with the
     # table delta scaled by depth / 64 (truncated toward zero like OpenMPT).
+    # The stored phase has already been advanced for this tick, so use the
+    # previous phase: OpenMPT reads the oscillator, then advances it.
     if voice.vib_depth and tick > 0:
-        period += int(wave_value(voice.vib_pos, voice.vib_wave) * voice.vib_depth / 64)
+        phase = (voice.vib_pos - voice.vib_speed) % WAVE_PHASE_STEPS
+        period += int(wave_value(phase, voice.vib_wave) * voice.vib_depth / 64)
 
     if voice.fine_tune:
         fine = voice.fine_tune if voice.fine_tune < 8 else voice.fine_tune - 16
@@ -451,9 +454,12 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
 
             # Tremolo also waits until the first tick is over in MOD playback,
             # and the MOD volume delta is depth / 32 rather than depth / 64.
+            # Like vibrato, the stored phase is one advance ahead of the value
+            # OpenMPT uses for the current tick.
             if voice.trem_depth and tick > 0:
+                phase = (voice.trem_pos - voice.trem_speed) % WAVE_PHASE_STEPS
                 trem = (
-                    wave_value(voice.trem_pos, voice.trem_wave)
+                    wave_value(phase, voice.trem_wave)
                     * voice.trem_depth
                     / (32.0 * 64.0)
                 )

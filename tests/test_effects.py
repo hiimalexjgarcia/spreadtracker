@@ -124,10 +124,14 @@ class EffectTests(unittest.TestCase):
         self.assertEqual(wave_value(0, 2), 127)
         self.assertEqual(wave_value(32, 2), -127)
 
-    def test_vibrato_is_a_linear_period_slide_after_the_first_tick(self) -> None:
+    def test_vibrato_uses_phase_before_current_tick_advance(self) -> None:
         voice = Voice(active=True, period=428.0, vib_speed=4, vib_depth=6)
-        voice.vib_pos = 16  # sine peak
+        voice.vib_pos = 4  # stored phase after this tick's advance
         self.assertEqual(effective_period(voice, 0), 428.0)
+        # Phase 0 is the sine table's zero crossing, not phase 4.
+        self.assertEqual(effective_period(voice, 1), 428.0)
+
+        voice.vib_pos = 16 + voice.vib_speed  # sine peak was at phase 16
         self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
 
     def test_volume_slide_uses_one_step_per_tick(self) -> None:

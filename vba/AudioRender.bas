@@ -483,7 +483,7 @@ Private Function MixFrame(ByVal tick As Long) As Double
     Dim acc As Double
     Dim period As Double, level As Double, sampleValue As Double
     Dim idx As Long, arpDelta As Long, vibOffset As Double, trem As Double
-    Dim fine As Long, frac As Double
+    Dim fine As Long, frac As Double, vibPhase As Long, tremPhase As Long
 
     For ch = 0 To CHANNEL_COUNT - 1
         If vActive(ch) Then
@@ -503,9 +503,12 @@ Private Function MixFrame(ByVal tick As Long) As Double
 
             ' Protracker-compatible playback skips vibrato on the first tick.
             ' Afterwards it is a linear period slide of depth / 64, truncated
-            ' toward zero just like the other tracker effects.
+            ' toward zero. The stored phase is already advanced for this tick,
+            ' so read the previous phase: OpenMPT reads, then advances.
             If vVibDepth(ch) <> 0 And tick > 0 Then
-                vibOffset = Fix(CDbl(WaveValue(vVibPos(ch), vVibWave(ch))) * CDbl(vVibDepth(ch)) / 64#)
+                vibPhase = (vVibPos(ch) - vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
+                If vibPhase < 0 Then vibPhase = vibPhase + WAVE_PHASE_STEPS
+                vibOffset = Fix(CDbl(WaveValue(vibPhase, vVibWave(ch))) * CDbl(vVibDepth(ch)) / 64#)
                 period = period + vibOffset
                 If period < 1# Then period = 1#
             End If
@@ -531,7 +534,9 @@ Private Function MixFrame(ByVal tick As Long) As Double
             End If
 
             If vTremDepth(ch) <> 0 And tick > 0 Then
-                trem = CDbl(WaveValue(vTremPos(ch), vTremWave(ch))) * CDbl(vTremDepth(ch)) / (32# * 64#)
+                tremPhase = (vTremPos(ch) - vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
+                If tremPhase < 0 Then tremPhase = tremPhase + WAVE_PHASE_STEPS
+                trem = CDbl(WaveValue(tremPhase, vTremWave(ch))) * CDbl(vTremDepth(ch)) / (32# * 64#)
                 level = Clamp01(level + trem)
             End If
 
