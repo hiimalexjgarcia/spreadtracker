@@ -18,8 +18,11 @@ WAV, and play it.
 - [vba/TrackerCore.bas](vba/TrackerCore.bas) — Excel worksheet parsing, cell decoding, base64 sample decoding
 - [vba/AudioRender.bas](vba/AudioRender.bas) — Excel 4-channel WAV renderer and playback entry points
 - [tests/fixtures/space_debris.mod](tests/fixtures/space_debris.mod) — sample 4-channel Protracker module
+- [tests/fixtures/elysium.mod](tests/fixtures/elysium.mod) — trailing-padding and final-order `Bxx` fixture
+- [tests/fixtures/musiklinjen.mod](tests/fixtures/musiklinjen.mod) — sample-only-cell and volume-slide fixture
 - [tests/test_calc_render.py](tests/test_calc_render.py) — headless Calc-path verification
 - [tests/test_effects.py](tests/test_effects.py) — synthetic checks for tick-driven effects
+- [tests/test_model.py](tests/test_model.py) — MOD parser edge cases
 - [tools/build_workbook.py](tools/build_workbook.py) — workbook generator
 - [tools/verify_workbook.py](tools/verify_workbook.py) — generated-workbook checks
 - [tools/verify_calc_live.py](tools/verify_calc_live.py) — live headless Calc/UNO macro test

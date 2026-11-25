@@ -247,44 +247,53 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
             param = cell.param
             up, down = _nibbles(param)
 
-            if cell.period > 0 and cell.sample > 0:
+            if cell.sample > 0:
                 instrument = song.instruments.get(cell.sample)
                 sample_data = song.sample_data.get(cell.sample)
                 if instrument is None or not sample_data:
                     voice.active = False
                     continue
 
-                previous_period = voice.period
-                voice.active = True
-                voice.data = sample_data
-                voice.length = len(sample_data)
-                voice.position = 0.0
-                if effect in (0x03, 0x05) and previous_period > 0:
-                    # Tone portamento starts from the previous note and slides
-                    # toward the new one instead of retriggering at the new pitch.
-                    voice.period = previous_period
-                    voice.target_period = float(cell.period)
+                has_note = cell.period > 0
+                if not has_note and not voice.active:
+                    # A sample number without a note selects the sample only;
+                    # it does not start a silent channel.
+                    pass
                 else:
-                    voice.period = float(cell.period)
-                    voice.target_period = voice.period
-                # MOD sample-header volume is literal: 0 is silent, 64 is full.
-                voice.volume = min(1.0, instrument.volume / 64.0)
-                # MOD repeat length is in bytes. Lengths of 2 bytes or less are
-                # treated as "no loop" by Protracker-compatible players (they
-                # are commonly used for one-shot samples), so honor the whole
-                # sample instead of wrapping to a silent 2-byte loop.
-                voice.looping = instrument.repeat_length > 2
-                voice.loop_start = instrument.repeat_start
-                voice.loop_end = (
-                    min(instrument.repeat_start + instrument.repeat_length, len(sample_data))
-                    if voice.looping
-                    else len(sample_data)
-                )
-                voice.fine_tune = instrument.finetune & 0x0F
-                voice.vib_pos = 0
-                voice.trem_pos = 0
-                voice.cut_tick = None
-                voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                    previous_period = voice.period
+                    voice.active = True
+                    voice.data = sample_data
+                    voice.length = len(sample_data)
+                    if has_note:
+                        voice.position = 0.0
+                        if effect in (0x03, 0x05) and previous_period > 0:
+                            # Tone portamento starts from the previous note and
+                            # slides toward the new pitch.
+                            voice.period = previous_period
+                            voice.target_period = float(cell.period)
+                        else:
+                            voice.period = float(cell.period)
+                            voice.target_period = voice.period
+                        voice.vib_pos = 0
+                        voice.trem_pos = 0
+                        voice.cut_tick = None
+                        voice.ramp_frames = int(RAMP_TICKS * frames_per_tick)
+                    # A sample number without a note keeps the current period
+                    # and sample position, but still reloads the sample header
+                    # (most importantly the sample volume) like Protracker.
+                    # MOD sample-header volume is literal: 0 is silent, 64 full.
+                    voice.volume = min(1.0, instrument.volume / 64.0)
+                    # MOD repeat length is in bytes. Lengths of 2 bytes or less
+                    # are "no loop" in Protracker-compatible players, so honor
+                    # the whole sample instead of a silent 2-byte loop.
+                    voice.looping = instrument.repeat_length > 2
+                    voice.loop_start = instrument.repeat_start
+                    voice.loop_end = (
+                        min(instrument.repeat_start + instrument.repeat_length, len(sample_data))
+                        if voice.looping
+                        else len(sample_data)
+                    )
+                    voice.fine_tune = instrument.finetune & 0x0F
             elif cell.period > 0 and cell.sample == 0 and voice.active:
                 if effect in (0x03, 0x05):
                     voice.target_period = float(cell.period)

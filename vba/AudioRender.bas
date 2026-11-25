@@ -274,46 +274,49 @@ Private Sub ProcessRow()
         hi = p \ 16
         lo = p Mod 16
 
-        If cell.Period > 0 And cell.Sample > 0 Then
+        If cell.Sample > 0 Then
             inst = GetInstrument(cell.Sample)
             If Not mSampleLoaded(cell.Sample) Then
                 mSampleCache(cell.Sample) = GetSampleBytes(cell.Sample)
                 mSampleLoaded(cell.Sample) = True
             End If
 
-            Dim previousPeriod As Double
-            previousPeriod = vPeriod(ch)
-            vActive(ch) = True
-            vData(ch) = mSampleCache(cell.Sample)
-            vLen(ch) = inst.Bytes
-            vPos(ch) = 0#
-            If (e = 3 Or e = 5) And previousPeriod > 0# Then
-                ' Tone portamento starts from the previous note and slides toward
-                ' the new one instead of retriggering at the new pitch.
-                vPeriod(ch) = previousPeriod
-                vTarget(ch) = CDbl(cell.Period)
-            Else
-                vPeriod(ch) = CDbl(cell.Period)
-                vTarget(ch) = vPeriod(ch)
+            If cell.Period > 0 Or vActive(ch) Then
+                Dim previousPeriod As Double
+                previousPeriod = vPeriod(ch)
+                vActive(ch) = True
+                vData(ch) = mSampleCache(cell.Sample)
+                vLen(ch) = inst.Bytes
+                If cell.Period > 0 Then
+                    vPos(ch) = 0#
+                    If (e = 3 Or e = 5) And previousPeriod > 0# Then
+                        ' Tone portamento starts from the previous note and
+                        ' slides toward the new pitch.
+                        vPeriod(ch) = previousPeriod
+                        vTarget(ch) = CDbl(cell.Period)
+                    Else
+                        vPeriod(ch) = CDbl(cell.Period)
+                        vTarget(ch) = vPeriod(ch)
+                    End If
+                    vVibPos(ch) = 0
+                    vTremPos(ch) = 0
+                    vCutTick(ch) = -1
+                    vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
+                End If
+                ' A sample number without a note keeps the current period and
+                ' sample position, but still reloads the sample header (most
+                ' importantly the sample volume) like Protracker.
+                vVol(ch) = CSng(inst.Volume / 64#)
+                vLoop(ch) = inst.RepeatLength > 2
+                vRepStart(ch) = inst.RepeatStart
+                If vLoop(ch) Then
+                    vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
+                    If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
+                Else
+                    vRepEnd(ch) = inst.Bytes
+                End If
+                vFine(ch) = inst.Finetune And &HF
             End If
-            ' MOD sample-header volume is literal: 0 is silent, 64 is full.
-            vVol(ch) = CSng(inst.Volume / 64#)
-            ' MOD repeat length is in bytes. Lengths of 2 bytes or less are
-            ' treated as "no loop" by Protracker-compatible players, so honor
-            ' the whole sample instead of wrapping to a silent 2-byte loop.
-            vLoop(ch) = inst.RepeatLength > 2
-            vRepStart(ch) = inst.RepeatStart
-            If vLoop(ch) Then
-                vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
-                If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
-            Else
-                vRepEnd(ch) = inst.Bytes
-            End If
-            vFine(ch) = inst.Finetune And &HF
-            vVibPos(ch) = 0
-            vTremPos(ch) = 0
-            vCutTick(ch) = -1
-            vRamp(ch) = CLng(RAMP_TICKS * mFramesPerTick)
         ElseIf cell.Period > 0 And cell.Sample = 0 And vActive(ch) Then
             If e = 3 Or e = 5 Then
                 vTarget(ch) = CDbl(cell.Period)

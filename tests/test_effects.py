@@ -303,6 +303,32 @@ class EffectTests(unittest.TestCase):
         self.assertGreater(jump_frames, plain_frames // 2)
         self.assertLess(jump_frames, plain_frames + 1000)
 
+    def test_sample_only_cell_reloads_sample_volume(self) -> None:
+        # A cell with a sample number but no note does not retrigger the sample,
+        # but Protracker still reloads its header volume. musiklinjen.mod relies
+        # on this while sliding channel volume down with A0F on every row.
+        rows = empty_rows(2)
+        rows[0][0] = Cell(period=428, sample=1, effect=0x0A, param=0x0F)
+        rows[1][0] = Cell(sample=1, effect=0x0A, param=0x0F)
+        plain = empty_rows(2)
+        plain[0][0] = Cell(period=428, sample=1, effect=0x0A, param=0x0F)
+        plain[1][0] = Cell(effect=0x0A, param=0x0F)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, with_sample = render_frames(
+                make_song(rows), Path(temp_dir) / "with-sample.wav"
+            )
+            _, without_sample = render_frames(
+                make_song(plain), Path(temp_dir) / "without-sample.wav"
+            )
+
+        row_frames = int(8000 * 5.0 / (2.0 * 125.0) * 6.0)
+        with_row = with_sample[row_frames : 2 * row_frames]
+        without_row = without_sample[row_frames : 2 * row_frames]
+        rms_with = sum(value * value for value in with_row) / len(with_row)
+        rms_without = sum(value * value for value in without_row) / len(without_row)
+        self.assertGreater(rms_with, rms_without * 3)
+
     def test_7xx_tremolo_modulates_volume(self) -> None:
         rows = empty_rows(2)
         rows[0][0] = NOTE

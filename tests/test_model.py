@@ -23,6 +23,16 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(len(module.samples[23].data), 26152)
         self.assertEqual(module.samples[23].repeat_length, 7330)
 
+    def test_musiklinjen_parses_full_order_list(self) -> None:
+        module = parse_mod(ROOT / "tests" / "fixtures" / "musiklinjen.mod")
+
+        self.assertEqual(module.title, "musiklinjen")
+        self.assertEqual(module.signature, "M.K.")
+        self.assertEqual(module.song_length, 64)
+        self.assertEqual(len(module.patterns), 45)
+        self.assertEqual(len(module.order), 128)
+        self.assertEqual(sum(sample.used for sample in module.samples), 24)
+
 
 if __name__ == "__main__":
     unittest.main()
