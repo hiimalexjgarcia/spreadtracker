@@ -151,7 +151,7 @@ def build_start_sheet(wb: Workbook, mod: Module, out_path: Path) -> None:
         ("Sheets", "Song = settings/order list · Patterns = pattern grid · Instruments = sample headers · Effects = command reference · SampleData = embedded PCM (hidden)."),
         ("To play (Excel)", "Import vba/TrackerCore.bas and vba/AudioRender.bas into the VBA editor, save as .xlsm, enable macros, and run RenderAndPlay."),
         ("To play (Calc)", "Copy calc/Spreadtracker.py and the spreadtracker package into LibreOffice's Scripts/python folder, open this workbook in Calc, and run RenderAndPlay. See README.md."),
-        ("Current renderer", "Tick-driven renderer: note triggers, signed 8-bit samples, linear interpolation, arpeggio (0xx), portamento (1xx/2xx/3xx/5xx), vibrato (4xx/6xx), tremolo (7xx), sample offsets (9xx), volume slides (5xx/6xx/Axx), Bxx/Dxx navigation, Cxx volume, common E subcommands, and Fxx speed/tempo."),
+        ("Current renderer", "Tick-driven renderer: note triggers, signed 8-bit samples, linear interpolation, one-shot handling for 2-byte MOD loop headers, arpeggio (0xx), portamento (1xx/2xx/3xx/5xx), vibrato (4xx/6xx), tremolo (7xx), sample offsets (9xx), volume slides (5xx/6xx/Axx), Bxx/Dxx navigation, Cxx volume, common E subcommands, and Fxx speed/tempo."),
         ("Timing", "Protracker timing: ticks/sec = BPM * 2 / 5. Rows advance once per Speed ticks; Fxx changes take effect immediately."),
         ("Sample numbers", "Shown as two-digit decimal values in the grid (not hexadecimal) to reduce ambiguity."),
         ("Rebuild", f"python tools/build_workbook.py --mod tests/fixtures/space_debris.mod --out {DEFAULT_WORKBOOK}"),

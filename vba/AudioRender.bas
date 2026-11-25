@@ -289,10 +289,14 @@ Private Sub ProcessRow()
             Else
                 vVol(ch) = CSng(inst.Volume / 64#)
             End If
-            vLoop(ch) = inst.RepeatLength > 1
+            ' MOD repeat length is in bytes. Lengths of 2 bytes or less are
+            ' treated as "no loop" by Protracker-compatible players, so honor
+            ' the whole sample instead of wrapping to a silent 2-byte loop.
+            vLoop(ch) = inst.RepeatLength > 2
             vRepStart(ch) = inst.RepeatStart
-            If vLoop(ch) And inst.RepeatLength > 2 Then
+            If vLoop(ch) Then
                 vRepEnd(ch) = inst.RepeatStart + inst.RepeatLength
+                If vRepEnd(ch) > inst.Bytes Then vRepEnd(ch) = inst.Bytes
             Else
                 vRepEnd(ch) = inst.Bytes
             End If

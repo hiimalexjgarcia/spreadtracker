@@ -46,7 +46,8 @@ empty cell.
 The renderer is tick-driven and currently supports:
 
 - note triggers and instrument/sample volume (MOD volume byte `0` means 64)
-- signed 8-bit MOD sample decoding with loops and linear interpolation
+- signed 8-bit MOD sample decoding with loops, one-shot handling for 2-byte
+  MOD loop headers, and linear interpolation
 - `0xx` arpeggio
 - `1xx`/`2xx` portamento and `3xx`/`5xx` tone portamento
 - `4xx`/`6xx` vibrato and `7xx` tremolo

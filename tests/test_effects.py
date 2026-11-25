@@ -26,6 +26,8 @@ def make_song(
     order: list[int] | None = None,
     patterns: list[list[list[Cell]]] | None = None,
     orders: int = 1,
+    sample_data: bytes = SAMPLE_DATA,
+    repeat_length: int = len(SAMPLE_DATA),
 ) -> Song:
     return Song(
         title="effect-test",
@@ -34,14 +36,14 @@ def make_song(
         instruments={
             1: Instrument(
                 name="test",
-                length=len(SAMPLE_DATA),
+                length=len(sample_data),
                 finetune=0,
                 volume=volume,
                 repeat_start=0,
-                repeat_length=2,
+                repeat_length=repeat_length,
             )
         },
-        sample_data={1: SAMPLE_DATA},
+        sample_data={1: sample_data},
         settings=RenderSettings(
             tempo=tempo,
             speed=speed,
@@ -260,6 +262,36 @@ class EffectTests(unittest.TestCase):
             abs(left - right) for left, right in zip(with_tremolo, without_tremolo)
         ) / len(with_tremolo)
         self.assertGreater(difference, 1e-4)
+
+    def test_short_mod_loop_is_treated_as_one_shot(self) -> None:
+        # Sample 12 in space_debris.mod has a 2-byte loop of 0x00, 0x00. A
+        # Protracker-compatible player treats that as "no loop".
+        data = bytes([0, 0]) + bytes([100] * 62)
+        rows = empty_rows(2)
+        rows[0][0] = NOTE
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_song(rows, sample_data=data, repeat_length=2),
+                Path(temp_dir) / "one-shot.wav",
+            )
+
+        self.assertGreater(max(abs(value) for value in frames), 0.1)
+
+    def test_sample_offset_works_with_short_loop_header(self) -> None:
+        # 9xx must start playback at param * 256 bytes even when the sample's
+        # tiny loop header would otherwise wrap it back to silence.
+        data = bytes(256) + bytes([100] * 256)
+        rows = empty_rows(2)
+        rows[0][0] = Cell(period=428, sample=1, effect=0x09, param=0x01)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_song(rows, sample_data=data, repeat_length=2),
+                Path(temp_dir) / "offset.wav",
+            )
+
+        self.assertGreater(max(abs(value) for value in frames), 0.1)
 
 
 if __name__ == "__main__":
