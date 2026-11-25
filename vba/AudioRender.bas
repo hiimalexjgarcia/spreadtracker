@@ -41,6 +41,7 @@ Private mOrderList() As Long
 Private mOrderPos As Long
 Private mRow As Long
 Private mTick As Long
+Private mEffectsTick As Long
 Private mPendingJump As Long
 Private mPendingBreak As Long
 Private mDelayRows As Long
@@ -135,6 +136,7 @@ Public Function RenderSongToWav() As String
     mOrderPos = 0
     mRow = 0
     mTick = 0
+    mEffectsTick = -1
     mPendingJump = -1
     mPendingBreak = -1
     mDelayRows = 0
@@ -143,12 +145,23 @@ Public Function RenderSongToWav() As String
     Dim frameCount As Long
     Dim tickPhase As Double
     Dim acc As Double
+    Dim ch As Long
     frameCount = 0
     tickPhase = 0#
 
     ProcessRow
 
     Do While mOrderPos < mOrders And frameCount < maxFrames
+        ' Continuous effects run once per tick, not once per output frame.
+        If mTick <> mEffectsTick Then
+            mEffectsTick = mTick
+            If mTick > 0 Then
+                For ch = 0 To CHANNEL_COUNT - 1
+                    If vActive(ch) Then ApplyTickEffects ch
+                Next ch
+            End If
+        End If
+
         acc = 0#
         acc = acc + MixFrame(mTick)
         mix(frameCount) = CSng(acc)
@@ -452,8 +465,6 @@ Private Function MixFrame(ByVal tick As Long) As Double
 
     For ch = 0 To CHANNEL_COUNT - 1
         If vActive(ch) Then
-            If tick > 0 Then ApplyTickEffects ch
-
             If vCutTick(ch) >= 0 And tick >= vCutTick(ch) Then vVol(ch) = 0!
 
             period = vPeriod(ch)

@@ -196,6 +196,7 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
     row = 0
     tick = 0
     tick_phase = 0.0
+    effects_tick = -1
     cached_pattern = -1
     current_pattern: list[list[Cell]] | None = None
     pending_jump: int | None = None
@@ -391,14 +392,21 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
     process_row()
 
     while order_pos < orders and len(mix) < max_frames:
+        # Continuous effects run once per tick, not once per output frame.
+        # A tick spans frames_per_tick frames, so track the last tick we
+        # processed to avoid applying slides/LFOs repeatedly within one tick.
+        if tick != effects_tick:
+            effects_tick = tick
+            if tick > 0:
+                for voice in voices:
+                    if voice.active:
+                        advance_voice_tick(voice)
+
         accumulator = 0.0
 
         for voice in voices:
             if not voice.active:
                 continue
-
-            if tick > 0:
-                advance_voice_tick(voice)
 
             if voice.cut_tick is not None and tick >= voice.cut_tick:
                 voice.volume = 0.0

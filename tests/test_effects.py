@@ -115,6 +115,30 @@ class EffectTests(unittest.TestCase):
         advance_voice_tick(voice)
         self.assertAlmostEqual(voice.volume, 0.5 - 1 / 64)
 
+    def test_continuous_effects_run_once_per_tick_not_per_frame(self) -> None:
+        rows = empty_rows(3)
+        rows[0][0] = NOTE
+        rows[1][0] = Cell(effect=0x0A, param=0x01)  # A01: slide down 1/tick
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, frames = render_frames(
+                make_song(rows, sample_rate=8000), Path(temp_dir) / "slide.wav"
+            )
+
+        frames_per_tick = 8000 * 5 / (2 * 125)
+        row_start = int(6 * frames_per_tick)
+        first_tick = frames[row_start : row_start + int(frames_per_tick)]
+        last_tick = frames[
+            row_start + int(5 * frames_per_tick) : row_start + int(6 * frames_per_tick)
+        ]
+        first_rms = sum(value * value for value in first_tick) / len(first_tick)
+        last_rms = sum(value * value for value in last_tick) / len(last_tick)
+
+        self.assertGreater(first_rms, 0.01)
+        # Five 1/64 steps should only reduce volume slightly. The old per-frame
+        # bug muted the channel completely within the first tick.
+        self.assertGreater(last_rms, first_rms / 2)
+
     def test_fine_volume_slide_lowers_rendered_level(self) -> None:
         rows = empty_rows(2)
         rows[0][0] = NOTE
