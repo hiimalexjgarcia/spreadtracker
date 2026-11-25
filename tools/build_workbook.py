@@ -72,7 +72,7 @@ EFFECT_SUB_INFO: tuple[tuple[str, str, str, str], ...] = (
     ("E1", "Fine portamento up", "Small upward pitch slide.", "Rendered"),
     ("E2", "Fine portamento down", "Small downward pitch slide.", "Rendered"),
     ("E3", "Glissando", "Force portamento to chromatic steps.", "Parsed only"),
-    ("E4", "Set vibrato waveform", "0=sine, 1=ramp down, 2=square, 3=ramp up.", "Rendered"),
+    ("E4", "Set vibrato waveform", "0=sine, 1=ramp down, 2=square, 3=random.", "Rendered"),
     ("E5", "Set finetune", "Override sample finetune.", "Rendered"),
     ("E6", "Pattern loop", "Loop a pattern section.", "Parsed only"),
     ("E7", "Set tremolo waveform", "Waveform select for tremolo.", "Rendered"),

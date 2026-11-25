@@ -27,7 +27,9 @@ Option Explicit
 Private Const SND_ASYNC As Long = &H1
 Private Const SND_NODEFAULT As Long = &H2
 Private Const AMIGA_CLOCK As Double = 7093789.2
-Private Const WAVE_STEPS As Long = 32
+' MOD/XM oscillator waveforms are 64 points long and 4xx/6xx speed advances
+' that phase one point per tick. The sine table is sampled from a sine wave.
+Private Const WAVE_PHASE_STEPS As Long = 64
 Private Const RAMP_TICKS As Double = 0.25
 
 ' Sequencer state. Kept at module level so ProcessRow and AdvanceRow can share
@@ -47,7 +49,8 @@ Private mPendingBreak As Long
 Private mDelayRows As Long
 Private mCachedPattern As Long
 Private mNotes() As TNote
-Private mWave(0 To WAVE_STEPS - 1) As Long
+Private mWave(0 To WAVE_PHASE_STEPS - 1) As Long
+Private mRandom(0 To WAVE_PHASE_STEPS - 1) As Long
 Private mSampleCache(1 To 31) As Variant
 Private mSampleLoaded(1 To 31) As Boolean
 
@@ -193,15 +196,29 @@ End Function
 ' ---------------------------------------------------------------------------
 
 Private Sub InitMixer()
-    ' Standard Protracker sine table, centred on 128.
-    mWave(0) = 0: mWave(1) = 24: mWave(2) = 49: mWave(3) = 74
-    mWave(4) = 97: mWave(5) = 120: mWave(6) = 141: mWave(7) = 161
-    mWave(8) = 180: mWave(9) = 197: mWave(10) = 212: mWave(11) = 225
-    mWave(12) = 236: mWave(13) = 244: mWave(14) = 250: mWave(15) = 253
-    mWave(16) = 255: mWave(17) = 253: mWave(18) = 250: mWave(19) = 244
-    mWave(20) = 236: mWave(21) = 225: mWave(22) = 212: mWave(23) = 197
-    mWave(24) = 180: mWave(25) = 161: mWave(26) = 141: mWave(27) = 120
-    mWave(28) = 97: mWave(29) = 74: mWave(30) = 49: mWave(31) = 24
+    ' Standard 64-point MOD/XM oscillator sine table, sampled from a sine wave.
+    Dim i As Long
+    For i = 0 To WAVE_PHASE_STEPS - 1
+        mWave(i) = CLng(Round(127# * Sin(2# * 3.14159265358979 * CDbl(i) / CDbl(WAVE_PHASE_STEPS))))
+    Next i
+
+    ' Deterministic random waveform used by MOD E4x/E7x type 3.
+    mRandom(0) = 98: mRandom(1) = -127: mRandom(2) = -43: mRandom(3) = 88
+    mRandom(4) = 102: mRandom(5) = 41: mRandom(6) = -65: mRandom(7) = -94
+    mRandom(8) = 125: mRandom(9) = 20: mRandom(10) = -71: mRandom(11) = -86
+    mRandom(12) = -70: mRandom(13) = -32: mRandom(14) = -16: mRandom(15) = -96
+    mRandom(16) = 17: mRandom(17) = 72: mRandom(18) = 107: mRandom(19) = -5
+    mRandom(20) = 116: mRandom(21) = -69: mRandom(22) = -62: mRandom(23) = -40
+    mRandom(24) = 10: mRandom(25) = -61: mRandom(26) = 65: mRandom(27) = 109
+    mRandom(28) = -18: mRandom(29) = -38: mRandom(30) = -13: mRandom(31) = -76
+    mRandom(32) = -23: mRandom(33) = 88: mRandom(34) = 21: mRandom(35) = -94
+    mRandom(36) = 8: mRandom(37) = 106: mRandom(38) = 21: mRandom(39) = -112
+    mRandom(40) = 6: mRandom(41) = 109: mRandom(42) = 20: mRandom(43) = -88
+    mRandom(44) = -30: mRandom(45) = 9: mRandom(46) = -127: mRandom(47) = 118
+    mRandom(48) = 42: mRandom(49) = -34: mRandom(50) = 89: mRandom(51) = -4
+    mRandom(52) = -51: mRandom(53) = -72: mRandom(54) = 21: mRandom(55) = -29
+    mRandom(56) = 112: mRandom(57) = 123: mRandom(58) = 84: mRandom(59) = -101
+    mRandom(60) = -92: mRandom(61) = 98: mRandom(62) = -54: mRandom(63) = -95
 
     Dim ch As Long
     For ch = 0 To CHANNEL_COUNT - 1
@@ -484,9 +501,13 @@ Private Function MixFrame(ByVal tick As Long) As Double
             End If
             If arpDelta <> 0 Then period = period / (2# ^ (CDbl(arpDelta) / 12#))
 
-            If vVibDepth(ch) <> 0 Then
-                vibOffset = CDbl(WaveValue(vVibPos(ch), vVibWave(ch))) * CDbl(vVibDepth(ch)) / 128#
-                If vibOffset <> 0# Then period = period / (2# ^ (vibOffset / (12# * 8#)))
+            ' Protracker-compatible playback skips vibrato on the first tick.
+            ' Afterwards it is a linear period slide of depth / 64, truncated
+            ' toward zero just like the other tracker effects.
+            If vVibDepth(ch) <> 0 And tick > 0 Then
+                vibOffset = Fix(CDbl(WaveValue(vVibPos(ch), vVibWave(ch))) * CDbl(vVibDepth(ch)) / 64#)
+                period = period + vibOffset
+                If period < 1# Then period = 1#
             End If
 
             If vFine(ch) <> 0 Then
@@ -509,8 +530,8 @@ Private Function MixFrame(ByVal tick As Long) As Double
                 vRamp(ch) = vRamp(ch) - 1
             End If
 
-            If vTremDepth(ch) <> 0 Then
-                trem = CDbl(WaveValue(vTremPos(ch), vTremWave(ch))) * CDbl(vTremDepth(ch)) / 64#
+            If vTremDepth(ch) <> 0 And tick > 0 Then
+                trem = CDbl(WaveValue(vTremPos(ch), vTremWave(ch))) * CDbl(vTremDepth(ch)) / (32# * 64#)
                 level = Clamp01(level + trem)
             End If
 
@@ -549,23 +570,31 @@ Private Sub ApplyTickEffects(ByVal ch As Long)
         End If
     End If
 
-    vVibPos(ch) = (vVibPos(ch) + vVibSpeed(ch)) Mod WAVE_STEPS
-    vTremPos(ch) = (vTremPos(ch) + vTremSpeed(ch)) Mod WAVE_STEPS
+    vVibPos(ch) = (vVibPos(ch) + vVibSpeed(ch)) Mod WAVE_PHASE_STEPS
+    vTremPos(ch) = (vTremPos(ch) + vTremSpeed(ch)) Mod WAVE_PHASE_STEPS
 End Sub
 
 Private Function WaveValue(ByVal position As Long, ByVal waveform As Long) As Long
+    Dim phase As Long
+    phase = position Mod WAVE_PHASE_STEPS
+    If phase < 0 Then phase = phase + WAVE_PHASE_STEPS
     If waveform = 1 Then
-        WaveValue = 127 - (position Mod WAVE_STEPS) * 8
-    ElseIf waveform = 2 Then
-        If (position Mod WAVE_STEPS) < 16 Then
-            WaveValue = -128
+        ' MOD/XM invert the ramp-down waveform relative to other formats.
+        If phase < 32 Then
+            WaveValue = phase * 4
         Else
+            WaveValue = phase * 4 - 255
+        End If
+    ElseIf waveform = 2 Then
+        If phase < 32 Then
             WaveValue = 127
+        Else
+            WaveValue = -127
         End If
     ElseIf waveform = 3 Then
-        WaveValue = (position Mod WAVE_STEPS) * 8 - 128
+        WaveValue = mRandom(phase)
     Else
-        WaveValue = mWave(position Mod WAVE_STEPS) - 128
+        WaveValue = mWave(phase)
     End If
 End Function
 

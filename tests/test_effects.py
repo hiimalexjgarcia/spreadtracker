@@ -9,7 +9,13 @@ from array import array
 from pathlib import Path
 
 from spreadtracker.model import Cell, Instrument, RenderSettings, Song
-from spreadtracker.render import Voice, advance_voice_tick, render_song, wave_value
+from spreadtracker.render import (
+    Voice,
+    advance_voice_tick,
+    effective_period,
+    render_song,
+    wave_value,
+)
 
 
 SAMPLE_DATA = bytes([0x40] * 64)
@@ -106,9 +112,23 @@ class EffectTests(unittest.TestCase):
         voice = Voice(active=True, period=428.0, vib_speed=4, vib_depth=3)
         advance_voice_tick(voice)
         self.assertEqual(voice.vib_pos, 4)
-        self.assertNotEqual(wave_value(0), wave_value(8))
-        self.assertEqual(wave_value(0, 2), -128)
-        self.assertEqual(wave_value(16, 2), 127)
+        # MOD/XM oscillator waveforms are 64 points long, so speed 4 repeats
+        # after 16 tick advances rather than the old 8.
+        for _ in range(15):
+            advance_voice_tick(voice)
+        self.assertEqual(voice.vib_pos, 0)
+        self.assertEqual(wave_value(0), 0)
+        self.assertEqual(wave_value(16), 127)
+        self.assertEqual(wave_value(32), 0)
+        self.assertEqual(wave_value(48), -127)
+        self.assertEqual(wave_value(0, 2), 127)
+        self.assertEqual(wave_value(32, 2), -127)
+
+    def test_vibrato_is_a_linear_period_slide_after_the_first_tick(self) -> None:
+        voice = Voice(active=True, period=428.0, vib_speed=4, vib_depth=6)
+        voice.vib_pos = 16  # sine peak
+        self.assertEqual(effective_period(voice, 0), 428.0)
+        self.assertEqual(effective_period(voice, 1), 428.0 + (127 * 6) // 64)
 
     def test_volume_slide_uses_one_step_per_tick(self) -> None:
         voice = Voice(active=True, volume=0.5, slide_down=1)

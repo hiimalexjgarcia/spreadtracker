@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 import wave
 from array import array
@@ -16,17 +17,25 @@ from .model import (
     Song,
 )
 
-# Protracker's 32-step sine table, centred on 128. Waveforms 1-3 are generated
-# from the same phase counter for E4x/E7x waveform selection.
-WAVE_TABLE: tuple[int, ...] = (
-    0, 24, 49, 74, 97, 120, 141, 161, 180, 197, 212, 225, 236, 244, 250, 253,
-    255, 253, 250, 244, 236, 225, 212, 197, 180, 161, 141, 120, 97, 74, 49, 24,
+# MOD/XM oscillator waveforms are 64 points long and the 4xx/6xx speed advances
+# that phase one point per tick. The sine table is the standard 64-point table
+# sampled from a sine wave, not the older 32-entry Protracker table.
+WAVE_PHASE_STEPS = 64
+WAVE_TABLE: tuple[int, ...] = tuple(
+    int(round(127 * math.sin(2 * math.pi * i / WAVE_PHASE_STEPS)))
+    for i in range(WAVE_PHASE_STEPS)
+)
+# OpenMPT's deterministic random waveform, used by E4x/E7x type 3.
+RANDOM_WAVE_TABLE: tuple[int, ...] = (
+    98, -127, -43, 88, 102, 41, -65, -94, 125, 20, -71, -86, -70, -32, -16, -96,
+    17, 72, 107, -5, 116, -69, -62, -40, 10, -61, 65, 109, -18, -38, -13, -76,
+    -23, 88, 21, -94, 8, 106, 21, -112, 6, 109, 20, -88, -30, 9, -127, 118,
+    42, -34, 89, -4, -51, -72, 21, -29, 112, 123, 84, -101, -92, 98, -54, -95,
 )
 
 # Mixer options kept as constants so the Python and VBA paths stay in step.
 USE_INTERPOLATION = True
 RAMP_TICKS = 0.25
-VIBRATO_UNITS_PER_SEMITONE = 8.0
 
 
 def _positive_int(value: object, default: int, minimum: int = 1) -> int:
@@ -55,15 +64,19 @@ def _nibbles(param: int) -> tuple[int, int]:
 
 
 def wave_value(position: int, waveform: int = 0) -> int:
-    """Return a Protracker LFO value in the range -128..127."""
-    position %= len(WAVE_TABLE)
-    if waveform == 1:  # ramp down / saw down
-        return 127 - position * 8
+    """Return the MOD oscillator delta for a 64-point phase position.
+
+    The ramp value is already sign-corrected for MOD/XM playback, where E4x
+    type 1 uses an inverted ramp compared with other formats.
+    """
+    phase = position % WAVE_PHASE_STEPS
+    if waveform == 1:  # ramp down / saw down (MOD/XM inverted)
+        return phase * 4 - (0 if phase < 32 else 255)
     if waveform == 2:  # square
-        return -128 if position < 16 else 127
-    if waveform == 3:  # ramp up / saw up
-        return position * 8 - 128
-    return WAVE_TABLE[position] - 128
+        return 127 if phase < 32 else -127
+    if waveform == 3:  # random
+        return RANDOM_WAVE_TABLE[phase]
+    return WAVE_TABLE[phase]
 
 
 @dataclass
@@ -117,8 +130,8 @@ def advance_voice_tick(voice: Voice) -> None:
         elif voice.period > voice.target_period:
             voice.period = max(voice.target_period, voice.period - voice.port_speed)
 
-    voice.vib_pos = (voice.vib_pos + voice.vib_speed) % len(WAVE_TABLE)
-    voice.trem_pos = (voice.trem_pos + voice.trem_speed) % len(WAVE_TABLE)
+    voice.vib_pos = (voice.vib_pos + voice.vib_speed) % WAVE_PHASE_STEPS
+    voice.trem_pos = (voice.trem_pos + voice.trem_speed) % WAVE_PHASE_STEPS
 
 
 def effective_period(voice: Voice, tick: int) -> float:
@@ -129,16 +142,17 @@ def effective_period(voice: Voice, tick: int) -> float:
         if semitones:
             period *= 2.0 ** (-semitones / 12.0)
 
-    if voice.vib_depth:
-        offset = wave_value(voice.vib_pos, voice.vib_wave) * voice.vib_depth / 128.0
-        if offset:
-            period *= 2.0 ** (-offset / (12.0 * VIBRATO_UNITS_PER_SEMITONE))
+    # Protracker-compatible playback does not apply vibrato on the first tick
+    # of a row. Afterwards MOD vibrato is a linear period slide, with the
+    # table delta scaled by depth / 64 (truncated toward zero like OpenMPT).
+    if voice.vib_depth and tick > 0:
+        period += int(wave_value(voice.vib_pos, voice.vib_wave) * voice.vib_depth / 64)
 
     if voice.fine_tune:
         fine = voice.fine_tune if voice.fine_tune < 8 else voice.fine_tune - 16
         period *= 2.0 ** (-fine / (12.0 * 8.0))
 
-    return period
+    return max(1.0, period)
 
 
 def _sample_value(data: bytes, index: int, voice: Voice) -> float:
@@ -435,11 +449,13 @@ def render_song(song: Song, out_path: Path | str | None = None) -> Path:
                 level *= min(1.0, voice.ramp_frames / ramp_length)
                 voice.ramp_frames -= 1
 
-            if voice.trem_depth:
+            # Tremolo also waits until the first tick is over in MOD playback,
+            # and the MOD volume delta is depth / 32 rather than depth / 64.
+            if voice.trem_depth and tick > 0:
                 trem = (
                     wave_value(voice.trem_pos, voice.trem_wave)
                     * voice.trem_depth
-                    / 64.0
+                    / (32.0 * 64.0)
                 )
                 level = max(0.0, min(1.0, level + trem))
 
