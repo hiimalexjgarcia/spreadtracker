@@ -1,0 +1,28 @@
+{
+  "sample_rate": 22050,
+  "amiga_model": "A1200",
+  "channels": 1,
+  "sample_width": 2,
+  "source": {
+    "project": "8bitbubsy/pt2-clone",
+    "commit": "087d1e8e199d302d1bbc9bb7d217a8779e1336ac"
+  },
+  "files": {
+    "elysium.mod": {
+      "frames": 4911121,
+      "sha256": "aab323c05fdc335f4f5775167be3b3bc3e7690cea657d7a516a5d34420f871fe"
+    },
+    "gslinger.mod": {
+      "frames": 6586347,
+      "sha256": "b7aa5baefa2ec40b4cc0590367eb476481583bcc30a1d02a80ee5021897b3292"
+    },
+    "musiklinjen.mod": {
+      "frames": 7361389,
+      "sha256": "8a1ea7b4f07e6f46240187ff027d9d5d26540adae9b32052d1a2f8e40b1ccd54"
+    },
+    "space_debris.mod": {
+      "frames": 6746176,
+      "sha256": "5f9cbe02a6dc890b9acc04110f06718e1224bca825f719f102bb485e30929dfa"
+    }
+  }
+}

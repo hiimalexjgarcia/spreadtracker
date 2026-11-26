@@ -1,9 +1,10 @@
-"""Render MOD fixtures with pt2-clone and report row-aligned correlations.
+"""Compare Spreadtracker renders against committed pt2-clone fixtures.
 
-pt2-clone already has a MOD2WAV renderer, but it is normally reached through the
-GUI. This tool copies a local pt2-clone checkout into a work directory, adds a
-small headless ``PT2_RENDER_OUT`` hook to that copy, builds it, renders every
-fixture, and compares the WAV against Spreadtracker's Python renderer.
+By default this tool reads the mono pt2-clone WAVs in
+``tests/fixtures/pt2/``. To regenerate them, pass ``--refresh-pt2`` and a local
+pt2-clone checkout with ``--pt2-src``. Regeneration copies the checkout into a
+work directory, adds a small headless ``PT2_RENDER_OUT`` hook to that copy,
+builds it, and renders every fixture through pt2-clone's own MOD2WAV renderer.
 
 The pt2-clone renderer uses a fixed-point BPM table and drifts slowly against a
 constant-rate renderer. The tool therefore estimates that drift from anchor
@@ -11,13 +12,15 @@ windows and compares each pattern row at its locally aligned frame offset.
 
 Usage::
 
-    python3 tools/compare_pt2_render.py --pt2-src /path/to/pt2-clone
+    python3 tools/compare_pt2_render.py
+    python3 tools/compare_pt2_render.py --refresh-pt2 --pt2-src /path/to/pt2-clone
 """
 
 from __future__ import annotations
 
 import argparse
 import array
+import hashlib
 import json
 import math
 import os
@@ -34,6 +37,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from spreadtracker.model import RenderSettings, parse_mod
 from spreadtracker.render import render_song
+
+REFERENCE_DIR = REPO_ROOT / "tests" / "fixtures" / "pt2"
+MANIFEST_NAME = "manifest.json"
 
 HEADLESS_MARKER = "PT2_RENDER_OUT"
 HEADLESS_VERSION = "2"
@@ -100,6 +106,98 @@ class FixtureResult:
     spreadtracker_wav: str
 
 
+def load_manifest(reference_dir: Path) -> dict:
+    """Load the committed pt2 reference manifest, or return an empty dict."""
+    path = reference_dir / MANIFEST_NAME
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def manifest_matches(args: argparse.Namespace, manifest: dict) -> bool:
+    """Check that cached references were rendered with these settings."""
+    return (
+        manifest.get("sample_rate") == args.sample_rate
+        and manifest.get("amiga_model") == args.amiga_model
+        and manifest.get("channels") == 1
+        and manifest.get("sample_width") == 2
+    )
+
+
+def cached_reference(
+    reference_dir: Path,
+    manifest: dict,
+    module: Path,
+    args: argparse.Namespace,
+) -> Path | None:
+    """Return the cached pt2 WAV for ``module`` when it is usable."""
+    if not manifest_matches(args, manifest):
+        return None
+    entry = manifest.get("files", {}).get(module.name)
+    if not isinstance(entry, dict):
+        return None
+
+    path = reference_dir / f"{module.stem}.wav"
+    if not path.is_file():
+        return None
+
+    with wave.open(str(path), "rb") as wav:
+        if (
+            wav.getframerate() != args.sample_rate
+            or wav.getnchannels() != 1
+            or wav.getsampwidth() != 2
+            or wav.getnframes() != entry.get("frames")
+        ):
+            return None
+
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return path if digest == entry.get("sha256") else None
+
+
+def write_manifest(
+    reference_dir: Path,
+    args: argparse.Namespace,
+    modules: list[Path],
+    paths: list[Path],
+    source: Path | None,
+) -> dict:
+    """Write a manifest describing freshly refreshed pt2 reference WAVs."""
+    existing = load_manifest(reference_dir)
+    old_files = existing.get("files", {})
+    files = dict(old_files) if isinstance(old_files, dict) else {}
+    for module, path in zip(modules, paths):
+        with wave.open(str(path), "rb") as wav:
+            frames = wav.getnframes()
+        files[module.name] = {
+            "frames": frames,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+    commit = None
+    if source is not None:
+        result = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            commit = result.stdout.strip()
+
+    manifest = {
+        "sample_rate": args.sample_rate,
+        "amiga_model": args.amiga_model,
+        "channels": 1,
+        "sample_width": 2,
+        "source": {"project": "8bitbubsy/pt2-clone", "commit": commit},
+        "files": files,
+    }
+    (reference_dir / MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    return manifest
+
+
 def read_wav_mono(path: Path) -> array.array:
     """Read a 16-bit WAV, downmixing stereo to mono."""
     with wave.open(str(path), "rb") as wav:
@@ -117,6 +215,19 @@ def read_wav_mono(path: Path) -> array.array:
     return array.array(
         "h", ((raw[i] + raw[i + 1]) // 2 for i in range(0, len(raw) - 1, 2))
     )
+
+
+def write_wav_mono(path: Path, samples: array.array, sample_rate: int) -> None:
+    """Write 16-bit mono PCM samples to ``path``."""
+    values = array.array("h", samples)
+    if sys.byteorder == "big":
+        values.byteswap()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(values.tobytes())
 
 
 def pearson(left: array.array | list[int], right: array.array | list[int]) -> float:
@@ -321,7 +432,7 @@ def render_pt2(
 
 def compare_fixture(
     module: Path,
-    binary: Path,
+    pt2_path: Path,
     work: Path,
     args: argparse.Namespace,
 ) -> FixtureResult:
@@ -334,9 +445,6 @@ def compare_fixture(
     ours_path.parent.mkdir(parents=True, exist_ok=True)
     row_log: list[tuple[int, int, int, int]] = []
     render_song(song, ours_path, row_log=row_log)
-
-    pt2_path = work / "pt2" / f"{module.stem}.wav"
-    render_pt2(binary, module, pt2_path, args.sample_rate, args.amiga_model)
 
     rendered = read_wav_mono(ours_path)
     reference = read_wav_mono(pt2_path)
@@ -410,7 +518,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pt2-src",
         default=os.environ.get("PT2_SRC"),
-        help="Path to a local pt2-clone checkout (or set PT2_SRC)",
+        help="pt2-clone checkout; only needed with --refresh-pt2 or --rebuild",
+    )
+    parser.add_argument(
+        "--reference-dir",
+        type=Path,
+        default=REFERENCE_DIR,
+        help="Directory holding committed mono pt2-clone WAVs and manifest.json",
     )
     parser.add_argument(
         "--mod",
@@ -434,6 +548,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-row-frames", type=int, default=200)
     parser.add_argument("--jobs", type=int, default=4, help="cmake build parallelism")
     parser.add_argument("--rebuild", action="store_true", help="Force a fresh pt2-clone build")
+    parser.add_argument(
+        "--refresh-pt2",
+        action="store_true",
+        help="Re-render and overwrite the committed pt2 reference WAVs",
+    )
     parser.add_argument("--json", type=Path, help="Also write results as JSON")
     return parser
 
@@ -441,8 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.work_dir = args.work_dir.expanduser().resolve()
-    if args.pt2_src is None:
-        raise SystemExit("Provide --pt2-src or set PT2_SRC to a pt2-clone checkout")
+    args.reference_dir = args.reference_dir.expanduser().resolve()
     if args.sample_rate < 22050:
         raise SystemExit("--sample-rate must be at least 22050 for pt2-clone MOD2WAV")
 
@@ -451,8 +569,44 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("No MOD files found")
 
     args.work_dir.mkdir(parents=True, exist_ok=True)
-    binary = prepare_pt2(Path(args.pt2_src), args.work_dir, args.rebuild, args.jobs)
-    results = [compare_fixture(module, binary, args.work_dir, args) for module in modules]
+    manifest = load_manifest(args.reference_dir)
+    cached = [cached_reference(args.reference_dir, manifest, module, args) for module in modules]
+    force_render = args.refresh_pt2 or args.rebuild
+
+    if not force_render and all(cached):
+        pt2_paths = [path for path in cached if path is not None]
+        print(f"Using committed pt2 references from {args.reference_dir}")
+    else:
+        if args.pt2_src is None:
+            raise SystemExit(
+                "Cached pt2 references are missing or use different settings; "
+                "provide --pt2-src or set PT2_SRC to re-render them"
+            )
+        source = Path(args.pt2_src).resolve()
+        binary = prepare_pt2(source, args.work_dir, args.rebuild, args.jobs)
+        rendered_paths: list[Path] = []
+        for module in modules:
+            pt2_path = args.work_dir / "pt2" / f"{module.stem}.wav"
+            render_pt2(binary, module, pt2_path, args.sample_rate, args.amiga_model)
+            rendered_paths.append(pt2_path)
+
+        if args.refresh_pt2:
+            args.reference_dir.mkdir(parents=True, exist_ok=True)
+            mono_paths: list[Path] = []
+            for module, path in zip(modules, rendered_paths):
+                target = args.reference_dir / f"{module.stem}.wav"
+                write_wav_mono(target, read_wav_mono(path), args.sample_rate)
+                mono_paths.append(target)
+            write_manifest(args.reference_dir, args, modules, mono_paths, source)
+            pt2_paths = mono_paths
+            print(f"Refreshed committed pt2 references in {args.reference_dir}")
+        else:
+            pt2_paths = rendered_paths
+
+    results = [
+        compare_fixture(module, pt2_path, args.work_dir, args)
+        for module, pt2_path in zip(modules, pt2_paths)
+    ]
 
     print(f"{'fixture':18s} {'rows':>5s} {'zero':>9s} {'row-mean':>9s} {'row-weighted':>13s} {'lag':>10s} {'drift ppm':>10s}")
     for result in results:

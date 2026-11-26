@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import wave
+from argparse import Namespace
 from array import array
 from pathlib import Path
 
@@ -13,8 +14,11 @@ from tools.compare_pt2_render import (
     Anchor,
     apply_headless_hook,
     best_lag,
+    cached_reference,
     fit_drift,
     read_wav_mono,
+    write_manifest,
+    write_wav_mono,
 )
 
 
@@ -35,6 +39,16 @@ class ComparePt2RenderTests(unittest.TestCase):
             path = Path(temp_dir) / "stereo.wav"
             write_wav(path, 2, [100, 200, 300, 400])
             self.assertEqual(list(read_wav_mono(path)), [150, 350])
+
+    def test_write_wav_mono_writes_pcm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "mono.wav"
+            write_wav_mono(path, array("h", [111, -222]), 22050)
+
+            with wave.open(str(path), "rb") as wav:
+                self.assertEqual(wav.getnchannels(), 1)
+                self.assertEqual(wav.getframerate(), 22050)
+                self.assertEqual(list(read_wav_mono(path)), [111, -222])
 
     def test_best_lag_finds_shifted_window(self) -> None:
         pattern = [((index * 37) % 251) - 125 for index in range(160)]
@@ -80,6 +94,30 @@ class ComparePt2RenderTests(unittest.TestCase):
             self.assertEqual(second.count('PT2_RENDER_OUT");'), 1)
             self.assertIn('#include "pt2_mod2wav.h"', second)
             self.assertLess(second.index("headless MOD2WAV"), second.index("displayMainScreen();"))
+
+    def test_cached_reference_validates_settings_and_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_dir = Path(temp_dir)
+            module = Path("demo.mod")
+            wav_path = reference_dir / "demo.wav"
+            write_wav(wav_path, 1, [123] * 64)
+            manifest = write_manifest(
+                reference_dir,
+                Namespace(sample_rate=22050, amiga_model="A1200"),
+                [module],
+                [wav_path],
+                None,
+            )
+            args = Namespace(sample_rate=22050, amiga_model="A1200")
+
+            self.assertEqual(cached_reference(reference_dir, manifest, module, args), wav_path)
+
+            args.sample_rate = 44100
+            self.assertIsNone(cached_reference(reference_dir, manifest, module, args))
+
+            args.sample_rate = 22050
+            write_wav(wav_path, 1, [124] * 64)
+            self.assertIsNone(cached_reference(reference_dir, manifest, module, args))
 
 
 if __name__ == "__main__":

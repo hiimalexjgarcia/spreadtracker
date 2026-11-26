@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 *.wav
 .pt2-compare/
+!tests/fixtures/pt2/*.wav
